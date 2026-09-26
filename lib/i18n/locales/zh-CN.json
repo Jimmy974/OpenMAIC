@@ -2149,5 +2149,38 @@
         "materialExtraction": null
       }
     }
+  },
+  "auth": {
+    "signedInAs": "已登录：{{name}}",
+    "parentBadge": "家长",
+    "familyLink": "家庭",
+    "sharedWithMe": "分享给我的课程",
+    "sharedBy": "由 {{name}} 分享",
+    "share": "分享",
+    "shareTitle": "分享这个课程",
+    "shareDescription": "被分享的人可以打开和播放这个课程，只有你可以修改。",
+    "choosePerson": "选择家庭成员",
+    "add": "添加",
+    "noOtherMembers": "还没有其他人登录过。请对方先打开一次这个网站，再试一次。",
+    "sharedWith": "已分享给",
+    "notSharedYet": "还没有分享给任何人。",
+    "remove": "移除",
+    "shareFailed": "未能更新分享设置，请再试一次。",
+    "familyTitle": "家庭",
+    "familyDescription": "使用这个网站的每一位成员、他们的课程和小测成绩。",
+    "members": "成员",
+    "courses": "课程",
+    "quizResults": "小测成绩",
+    "noCourses": "还没有课程。",
+    "noQuizResults": "还没有小测记录。",
+    "courseCount": "{{count}} 个课程",
+    "lastSeen": "最近使用：{{time}}",
+    "inProgress": "进行中",
+    "quizChanged": "小测在这次作答后已修改",
+    "deletedCourse": "已删除的课程",
+    "open": "打开",
+    "notAllowed": "只有家长可以查看这一页。",
+    "loadFailed": "加载失败，请再试一次。",
+    "back": "返回"
   }
 }

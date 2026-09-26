@@ -2149,5 +2149,38 @@
         "materialExtraction": null
       }
     }
+  },
+  "auth": {
+    "signedInAs": "已登入：{{name}}",
+    "parentBadge": "家長",
+    "familyLink": "家庭",
+    "sharedWithMe": "分享給我的課程",
+    "sharedBy": "由 {{name}} 分享",
+    "share": "分享",
+    "shareTitle": "分享這個課程",
+    "shareDescription": "被分享的人可以打開和播放這個課程，只有你可以修改。",
+    "choosePerson": "選擇家庭成員",
+    "add": "加入",
+    "noOtherMembers": "還沒有其他人登入過。請對方先打開一次這個網站，再試一次。",
+    "sharedWith": "已分享給",
+    "notSharedYet": "還沒有分享給任何人。",
+    "remove": "移除",
+    "shareFailed": "未能更新分享設定，請再試一次。",
+    "familyTitle": "家庭",
+    "familyDescription": "使用這個網站的每一位成員、他們的課程和小測成績。",
+    "members": "成員",
+    "courses": "課程",
+    "quizResults": "小測成績",
+    "noCourses": "還沒有課程。",
+    "noQuizResults": "還沒有小測紀錄。",
+    "courseCount": "{{count}} 個課程",
+    "lastSeen": "最近使用：{{time}}",
+    "inProgress": "進行中",
+    "quizChanged": "小測在這次作答後已修改",
+    "deletedCourse": "已刪除的課程",
+    "open": "打開",
+    "notAllowed": "只有家長可以查看這一頁。",
+    "loadFailed": "載入失敗，請再試一次。",
+    "back": "返回"
   }
 }

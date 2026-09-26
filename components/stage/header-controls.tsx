@@ -28,6 +28,8 @@ import { CircularProgress } from '@/components/ui/circular-progress';
 import { VideoExportDialog } from './video-export-dialog';
 import { LanguageSwitcher } from '../language-switcher';
 import { SettingsDialog } from '../settings';
+import { IdentityChip } from '../auth/identity-chip';
+import { ShareCourseButton } from '../auth/share-course-button';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -146,6 +148,9 @@ export function HeaderControls({
             : 'bg-white/60 dark:bg-gray-800/60 border border-gray-100/50 dark:border-gray-700/50 px-2 py-1.5',
         )}
       >
+        {/* Signed-in member (sign-in builds only; renders nothing otherwise) */}
+        <IdentityChip />
+
         {/* Language — Radix DropdownMenu so its menu portals to body
             and never gets clipped by an ancestor's overflow-hidden. */}
         <LanguageSwitcher />
@@ -259,6 +264,9 @@ export function HeaderControls({
           />
         </label>
       )}
+
+      {/* Share with family members — owner only, sign-in builds only. */}
+      <ShareCourseButton compact={compact} />
 
       {/* Export / Download — lives to the right of the Pro Switch.
           Not a settings function so it does not belong inside the

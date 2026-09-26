@@ -2149,5 +2149,38 @@
         "materialExtraction": null
       }
     }
+  },
+  "auth": {
+    "signedInAs": "Signed in as {{name}}",
+    "parentBadge": "Parent",
+    "familyLink": "Family",
+    "sharedWithMe": "Shared with me",
+    "sharedBy": "Shared by {{name}}",
+    "share": "Share",
+    "shareTitle": "Share this course",
+    "shareDescription": "People you share with can open and play this course. Only you can edit it.",
+    "choosePerson": "Choose a family member",
+    "add": "Add",
+    "noOtherMembers": "No one else has signed in yet. Ask them to open this site once, then try again.",
+    "sharedWith": "Shared with",
+    "notSharedYet": "Not shared with anyone yet.",
+    "remove": "Remove",
+    "shareFailed": "Could not update sharing. Try again.",
+    "familyTitle": "Family",
+    "familyDescription": "Everyone who uses this site, their courses and their quiz results.",
+    "members": "Members",
+    "courses": "Courses",
+    "quizResults": "Quiz results",
+    "noCourses": "No courses yet.",
+    "noQuizResults": "No quiz attempts yet.",
+    "courseCount": "{{count}} courses",
+    "lastSeen": "Last seen {{time}}",
+    "inProgress": "In progress",
+    "quizChanged": "Quiz changed since this attempt",
+    "deletedCourse": "Deleted course",
+    "open": "Open",
+    "notAllowed": "Only parents can see this page.",
+    "loadFailed": "Could not load. Try again.",
+    "back": "Back"
   }
 }

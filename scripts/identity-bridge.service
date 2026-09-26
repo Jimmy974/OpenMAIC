@@ -1,0 +1,24 @@
+# systemd USER unit for the OpenMAIC identity bridge (docs/auth-signed-identity.md).
+#
+#   install -m 0644 scripts/identity-bridge.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload && systemctl --user enable --now identity-bridge
+#
+# Needs `loginctl enable-linger <user>` so it runs without a login session.
+# ~/source/identity-bridge/.env (mode 0600) holds AUTH_IDENTITY_SECRET and the
+# BRIDGE_* settings; the script is copied next to it so a repo checkout that
+# moves on does not change the running bridge until it is deployed again.
+[Unit]
+Description=OpenMAIC identity bridge (Tailscale identity -> signed headers)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=%h/source/identity-bridge/.env
+ExecStart=/usr/local/bin/node %h/source/identity-bridge/identity-bridge.mjs
+Restart=always
+RestartSec=2
+NoNewPrivileges=true
+
+[Install]
+WantedBy=default.target
