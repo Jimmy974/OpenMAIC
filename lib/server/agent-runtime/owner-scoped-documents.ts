@@ -9,6 +9,7 @@ import type { AppStage } from '@/lib/document-store/persistence-types';
 import { validateAppScene, validateAppStage } from '@/lib/document-store/validators';
 import { createOwnerBoundDocumentStore } from '@/lib/persistence/owner-bound-document-store';
 import { getServerPersistenceProvider } from '@/lib/persistence/server-provider';
+import { foreignReadCheckFor } from '@/lib/server/auth/access';
 import type { AppScene } from '@/lib/types/stage';
 import type { Queryable } from '@openmaic/storage/document/pg';
 
@@ -25,7 +26,8 @@ export type OwnerScopedDocumentStore = DocumentStore<AppScene, AppStage> &
  *
  * This is the exact seam the agent runner uses (`runner.ts`): the document
  * provider is bound to the resolved owner through the stage access layer.
- * Reads are capability-by-id, writes and listings are owner-only, and every
+ * Reads are capability-by-id (with signed-header sign-in: owner, admins and
+ * share recipients only), writes and listings are owner-only, and every
  * operation re-checks `stage_meta` inside its transaction. A browser holding a
  * course id may therefore read it without gaining mutation authority.
  * `withPlainJsonDocumentWrites` keeps the write
@@ -44,6 +46,7 @@ export async function getOwnerScopedDocumentStore(
       validateScene: validateAppScene,
       validateStage: validateAppStage,
       mutationFence,
+      canReadForeign: foreignReadCheckFor(ownerId),
     }) as unknown as OwnerScopedDocumentStore,
   );
 }

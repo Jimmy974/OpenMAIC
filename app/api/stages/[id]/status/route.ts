@@ -13,13 +13,25 @@ import { NextResponse } from 'next/server';
 
 import { isAgentRuntimeConfigured } from '@/lib/config/feature-flags';
 import { resolveStageAccess } from '@/lib/server/stage-access';
+import { viewerMayReadStage } from '@/lib/server/auth/access';
+import { identityOr401 } from '@/lib/server/auth/responses';
+import { isAuthModeEnabled } from '@/lib/server/auth/signed-identity';
 
 export const runtime = 'nodejs';
 
 type Params = { params: Promise<{ id: string }> };
 
-export async function GET(_req: NextRequest, { params }: Params) {
+export async function GET(req: NextRequest, { params }: Params) {
   if (!isAgentRuntimeConfigured()) return new Response('Not found', { status: 404 });
+
+  // With signed-header sign-in the answer is for members who may read the
+  // course; everyone else gets the same 404 as a missing course.
+  let viewerOwnerId: string | undefined;
+  if (isAuthModeEnabled()) {
+    const identity = identityOr401(req);
+    if (identity instanceof Response) return identity;
+    viewerOwnerId = identity.ownerId;
+  }
 
   const { id } = await params;
   try {
@@ -28,7 +40,11 @@ export async function GET(_req: NextRequest, { params }: Params) {
     // Tombstoned and never-existed must be indistinguishable: this endpoint is
     // unauthenticated, so an answer other than plain 404 would let anyone
     // confirm that a given id used to be a real course.
-    if (!access) {
+    if (
+      !access ||
+      (viewerOwnerId !== undefined &&
+        !(await viewerMayReadStage(id, access.ownerId, viewerOwnerId)))
+    ) {
       return NextResponse.json({ error: 'not_found' }, { status: 404 });
     }
 

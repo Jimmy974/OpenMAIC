@@ -25,7 +25,7 @@
 import type { NextRequest } from 'next/server';
 
 import { isAgentRuntimeConfigured } from '@/lib/config/feature-flags';
-import { resolveRequestOwnerId } from '@/lib/server/agent-runtime/owner';
+import { ownerIdOr401 } from '@/lib/server/auth/responses';
 import { getOwnerScopedDocumentStore } from '@/lib/server/agent-runtime/owner-scoped-documents';
 import { ownerNotFound } from '@/lib/server/agent-runtime/route-response';
 
@@ -47,7 +47,8 @@ export async function GET(req: NextRequest, { params }: Params) {
   if (!isAgentRuntimeConfigured()) return new Response('Not found', { status: 404 });
 
   const responseHeaders = new Headers();
-  const ownerId = resolveRequestOwnerId(req, responseHeaders);
+  const ownerId = ownerIdOr401(req, responseHeaders);
+  if (ownerId instanceof Response) return ownerId;
   const { id: stageId } = await params;
 
   // Existence-gated, exactly like the manifest route: the owner-bound store

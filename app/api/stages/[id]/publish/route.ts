@@ -12,6 +12,7 @@ import { isAgentRuntimeConfigured } from '@/lib/config/feature-flags';
 import { setStagePublished } from '@/lib/persistence/stage-meta';
 import { getStageAccessDb, resolveStageAccess } from '@/lib/server/stage-access';
 import { withRequestOwnerId } from '@/lib/server/agent-runtime/with-owner';
+import { isAuthModeEnabled } from '@/lib/server/auth/signed-identity';
 
 export const runtime = 'nodejs';
 
@@ -19,6 +20,9 @@ type Params = { params: Promise<{ id: string }> };
 
 export async function POST(req: NextRequest, { params }: Params) {
   if (!isAgentRuntimeConfigured()) return new Response('Not found', { status: 404 });
+  // Signed-header sign-in shares courses with named members instead; a
+  // public flag would be a read grant outside that model (design §4).
+  if (isAuthModeEnabled()) return new Response('Not found', { status: 404 });
 
   return withRequestOwnerId(req, async (ownerId, responseHeaders) => {
     const { id: stageId } = await params;

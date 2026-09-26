@@ -27,6 +27,7 @@ import { NextResponse } from 'next/server';
 import { isServerPersistenceConfigured } from '@/lib/config/feature-flags';
 import { resolveStageAccess } from '@/lib/server/stage-access';
 import { withRequestOwnerId } from '@/lib/server/agent-runtime/with-owner';
+import { viewerMayReadStage } from '@/lib/server/auth/access';
 
 // Per-viewer and mutable on every publish/unpublish/delete: this response must
 // never be cached, by Next or by anything in front of it.
@@ -51,8 +52,9 @@ export async function GET(req: NextRequest, { params }: Params) {
     try {
       const access = await resolveStageAccess(stageId);
 
-      // Absent or tombstoned — indistinguishable, deliberately.
-      if (!access) {
+      // Absent, tombstoned, or (with sign-in) not readable by this member —
+      // indistinguishable, deliberately.
+      if (!access || !(await viewerMayReadStage(stageId, access.ownerId, ownerId))) {
         return NextResponse.json({ error: 'not_found' }, { status: 404, headers: responseHeaders });
       }
 

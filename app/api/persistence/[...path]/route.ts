@@ -28,6 +28,9 @@ import {
 import { readStageMeta } from '@/lib/persistence/stage-meta';
 import { APP_RUNTIME_PAYLOAD_VALIDATORS } from '@/lib/runtime/payload-validators';
 import { withRequestOwnerId } from '@/lib/server/agent-runtime/with-owner';
+import { foreignReadCheckFor } from '@/lib/server/auth/access';
+import { isAuthModeEnabled } from '@/lib/server/auth/signed-identity';
+import type { Queryable } from '@openmaic/storage/document/pg';
 
 export const runtime = 'nodejs';
 
@@ -98,6 +101,7 @@ async function createPersistenceHandler(
     ownerId,
     validateScene: validateAppScene,
     validateStage: validateAppStage,
+    canReadForeign: foreignReadCheckFor(ownerId),
   });
   // The asset posture, precisely.
   //
@@ -151,6 +155,10 @@ async function createPersistenceHandler(
       if (request.url?.startsWith('/assets')) {
         return { key: SHARED_ASSET_PRINCIPAL, learnerKey: ownerId };
       }
+      // Signed-header sign-in: the runtime partition is the verified member's
+      // account key (the owner id), never a client-supplied header. A path
+      // naming another learner is refused by the handler's learner check.
+      if (isAuthModeEnabled()) return { key: SHARED_ASSET_PRINCIPAL, learnerKey: ownerId };
       return authenticatePersistenceRequest(request);
     },
     authorizeAssets: async (_principal, request) => {
@@ -160,7 +168,10 @@ async function createPersistenceHandler(
       // nothing about who is asking.
       return method !== 'PUT' && method !== 'DELETE';
     },
-    authorizeMerge: async () => false,
+    // Only in sign-in mode, and only this device's pre-sign-in attempts into
+    // the member's own account partition (design §6).
+    authorizeMerge: async (principal, fromKey, toKey) =>
+      isAuthModeEnabled() && toKey === principal.learnerKey && fromKey.startsWith('anon:'),
     authorizeAdmin: async () => false,
     authorizeDocuments: async () => access === 'allow',
     validateScene: validateAppScene,
@@ -310,6 +321,13 @@ function runNodeHandler(handler: RequestListener, request: Request): Promise<Res
   });
 }
 
+function foreignDocumentReads(ownerId: string, queryable: Queryable) {
+  const check = foreignReadCheckFor(ownerId);
+  return (
+    check && ((stageId: string, stageOwnerId: string) => check(queryable, stageId, stageOwnerId))
+  );
+}
+
 interface PersistenceRequestDeps {
   poolFactory?: PersistencePoolFactory;
 }
@@ -351,7 +369,9 @@ async function handlePersistenceRequestInner(
   if (!connectionString) {
     return jsonError(404, 'PERSISTENCE_NOT_CONFIGURED', 'server persistence not configured');
   }
-  if (!process.env.PERSISTENCE_DEV_TOKEN) {
+  // Sign-in mode authenticates every request from the signed identity, so the
+  // development token is not needed there.
+  if (!process.env.PERSISTENCE_DEV_TOKEN && !isAuthModeEnabled()) {
     return jsonError(
       503,
       'PERSISTENCE_DEV_TOKEN_MISSING',
@@ -376,6 +396,7 @@ async function handlePersistenceRequestInner(
               .query('SELECT 1 FROM document_stages WHERE id = $1', [stageId])
               .then((result) => result.rows.length > 0),
           (stageId) => readStageMeta(queryable, stageId),
+          foreignDocumentReads(ownerId, pool as unknown as Queryable),
         );
       }
 

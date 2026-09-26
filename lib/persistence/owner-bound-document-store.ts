@@ -33,6 +33,16 @@ export interface OwnerBoundDocumentStoreOptions {
   validateStage: StageValidator;
   /** Runner-only lease fence, evaluated inside every mutation transaction. */
   mutationFence?: (queryable: Queryable) => Promise<void>;
+  /**
+   * Narrows capability-by-id reads of a course this owner does not own.
+   * Absent (the default) keeps them open; signed-header sign-in passes one
+   * that admits admins and share recipients only. A refusal reads as absent.
+   */
+  canReadForeign?: (
+    queryable: Queryable,
+    stageId: string,
+    stageOwnerId: string,
+  ) => Promise<boolean>;
 }
 
 type OwnershipMode = 'create' | 'mutate' | 'read' | 'delete' | 'library';
@@ -253,6 +263,14 @@ export function createOwnerBoundDocumentStore<
           const row = result.rows[0];
           if (row) {
             if (operation.mode !== 'read' && row.owner_id !== options.ownerId) {
+              throw new StageAccessError(operation.stageId, options.ownerId, 'foreign');
+            }
+            if (
+              operation.mode === 'read' &&
+              row.owner_id !== options.ownerId &&
+              options.canReadForeign &&
+              !(await options.canReadForeign(queryable, operation.stageId, row.owner_id))
+            ) {
               throw new StageAccessError(operation.stageId, options.ownerId, 'foreign');
             }
             if (row.deleted_at !== null && operation.mode !== 'delete') {

@@ -45,6 +45,18 @@ export async function register(): Promise<void> {
   const { resolveSharedOwnerId } = await import('@/lib/server/agent-runtime/shared-owner');
   resolveSharedOwnerId();
 
+  // Signed-header sign-in, for the same reason and at the same moment: a
+  // runtime AUTH_MODE that disagrees with the NEXT_PUBLIC_AUTH_MODE the image
+  // was built with would boot, pass its health check, and then send learner
+  // data to the wrong partition. The NEXT_PUBLIC_* values are the build's.
+  const { validateAuthConfig } = await import('@/lib/server/auth/config');
+  const { publicAuthModeBuildValue } = await import('@/lib/auth/public-mode');
+  validateAuthConfig({
+    ...process.env,
+    NEXT_PUBLIC_AUTH_MODE: publicAuthModeBuildValue(),
+    NEXT_PUBLIC_PERSISTENCE: process.env.NEXT_PUBLIC_PERSISTENCE,
+  });
+
   // Imported dynamically so the Edge bundle never pulls in `pg`.
   const { startAssetCollectorSchedule } =
     await import('@/lib/persistence/asset-collector-schedule');

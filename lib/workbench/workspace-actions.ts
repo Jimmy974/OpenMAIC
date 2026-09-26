@@ -1,9 +1,14 @@
 'use server';
 
-import { cookies } from 'next/headers';
+import { cookies, headers } from 'next/headers';
 import { anonymousCookieSecure } from '@/lib/server/agent-runtime/owner';
 import { resolveSharedOwnerId } from '@/lib/server/agent-runtime/shared-owner';
 import { getAgentSessionStore } from '@/lib/server/agent-runtime/store';
+import {
+  isAuthModeEnabled,
+  requireRequestIdentity,
+  UnauthenticatedError,
+} from '@/lib/server/auth/signed-identity';
 
 /**
  * The anonymous identity cookie minted by the agent-runtime owner resolution
@@ -17,6 +22,10 @@ const ANONYMOUS_COOKIE = 'anonymous_id';
 const UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 async function currentOwnerId(): Promise<string> {
+  // Signed-header sign-in: the verified member, exactly as the routes resolve
+  // it. Throws UnauthenticatedError without a valid identity.
+  if (isAuthModeEnabled()) return requireRequestIdentity(await headers()).ownerId;
+
   // A configured deployment-wide id replaces the cookie partition entirely, and
   // has to be read here too: otherwise the workspace list would be filtered by
   // one owner while its row actions acted on another.
@@ -41,7 +50,13 @@ async function currentOwnerId(): Promise<string> {
 export async function deleteWorkspaceSession(id: string): Promise<{ deleted: boolean }> {
   const sessionId = id.trim();
   if (!sessionId) return { deleted: false };
-  const ownerId = await currentOwnerId();
+  let ownerId: string;
+  try {
+    ownerId = await currentOwnerId();
+  } catch (error) {
+    if (error instanceof UnauthenticatedError) return { deleted: false };
+    throw error;
+  }
   const store = await getAgentSessionStore();
   return { deleted: await store.softDeleteSession(sessionId, ownerId) };
 }

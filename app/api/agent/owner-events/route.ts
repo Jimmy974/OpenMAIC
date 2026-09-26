@@ -12,7 +12,7 @@ import type { NextRequest } from 'next/server';
 
 import { isAgentRuntimeConfigured } from '@/lib/config/feature-flags';
 import { subscribeAgentEventWakeup } from '@/lib/server/agent-runtime/event-notify-bus';
-import { resolveRequestOwnerId } from '@/lib/server/agent-runtime/owner';
+import { ownerIdOr401 } from '@/lib/server/auth/responses';
 import { getAgentSessionStore } from '@/lib/server/agent-runtime/store';
 
 export const runtime = 'nodejs';
@@ -46,7 +46,8 @@ export async function GET(req: NextRequest) {
   // created under authenticated identities would be unreachable by their own
   // owner.
   const responseHeaders = new Headers();
-  const ownerId = resolveRequestOwnerId(req, responseHeaders);
+  const ownerId = ownerIdOr401(req, responseHeaders);
+  if (ownerId instanceof Response) return ownerId;
   const store = await getAgentSessionStore();
 
   const url = new URL(req.url);

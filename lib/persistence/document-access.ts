@@ -11,6 +11,12 @@ export type DocumentAction =
 export type DocumentAccess = 'allow' | 'forbid' | 'not-found';
 export type StageMetaReader = (stageId: string) => Promise<StageMetaRow | null>;
 export type DocumentExistenceReader = (stageId: string) => Promise<boolean>;
+/**
+ * Narrows a read of a live course the caller does not own. Absent keeps
+ * reads capability-by-id; signed-header sign-in passes one that admits admins
+ * and share recipients. A refusal answers exactly like a missing course.
+ */
+export type ForeignReadDecider = (stageId: string, stageOwnerId: string) => Promise<boolean>;
 
 const LONE_SURROGATE = /[\uD800-\uDFFF]/u;
 
@@ -61,6 +67,7 @@ export async function decideDocumentAccess(
   readMeta: StageMetaReader,
   documentExists: DocumentExistenceReader,
   rereadMeta: StageMetaReader = readMeta,
+  canReadForeign?: ForeignReadDecider,
 ): Promise<DocumentAccess> {
   if (!ownerId) return 'forbid';
   switch (action.kind) {
@@ -70,7 +77,15 @@ export async function decideDocumentAccess(
     case 'read': {
       const meta = await readMeta(action.stageId);
       if (!meta) return 'not-found';
-      return meta.deletedAt === null ? 'allow' : 'not-found';
+      if (meta.deletedAt !== null) return 'not-found';
+      if (
+        meta.ownerId !== ownerId &&
+        canReadForeign &&
+        !(await canReadForeign(action.stageId, meta.ownerId))
+      ) {
+        return 'not-found';
+      }
+      return 'allow';
     }
     case 'write': {
       const meta = await readMeta(action.stageId);

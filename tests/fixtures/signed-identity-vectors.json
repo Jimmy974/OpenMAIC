@@ -1,0 +1,171 @@
+{
+  "description": "Shared signed-identity test vectors (design §1). Used by tests/server/auth and tests/scripts/identity-bridge. Signed input: v1\\n<login>\\n<name>\\n<avatar>\\n<timestamp>, HMAC-SHA256 keyed with the UTF-8 bytes of the secret, lower-case hex.",
+  "secret": "test-only-secret-0123456789abcdef0123456789abcdef",
+  "now": 1790000100,
+  "maxSkewSeconds": 300,
+  "vectors": [
+    {
+      "name": "ascii-name",
+      "tailscale": {
+        "login": "Parent@Example.com ",
+        "name": "Parent One",
+        "avatar": "https://example.com/p.png"
+      },
+      "headers": {
+        "login": "parent@example.com",
+        "name": "Parent%20One",
+        "avatar": "https://example.com/p.png",
+        "timestamp": "1790000000",
+        "signature": "58248bae97ffaf51226fdbcf56ba85c85e2c28cd7bf93631c514337d3ba2c54a"
+      },
+      "expect": {
+        "ok": true,
+        "login": "parent@example.com",
+        "name": "Parent One",
+        "avatarUrl": "https://example.com/p.png",
+        "ownerId": "acct_ee9cd2a3ead6d5cc3b5b0bc3cb195925"
+      }
+    },
+    {
+      "name": "rfc2047-chinese-name-empty-avatar",
+      "tailscale": {
+        "login": "student@example.com",
+        "name": "=?utf-8?b?6Zmz5aSn5paH?=",
+        "avatar": ""
+      },
+      "headers": {
+        "login": "student@example.com",
+        "name": "%E9%99%B3%E5%A4%A7%E6%96%87",
+        "avatar": "",
+        "timestamp": "1790000050",
+        "signature": "c13bf7e11df642906c37a3b947e8d796654330a8ba3676bd20377f0f3834d053"
+      },
+      "expect": {
+        "ok": true,
+        "login": "student@example.com",
+        "name": "陳大文",
+        "avatarUrl": null,
+        "ownerId": "acct_616bb35d31d0a6840d2d5adfeacde597"
+      }
+    },
+    {
+      "name": "absent-name-and-avatar",
+      "tailscale": {
+        "login": "third@example.com"
+      },
+      "headers": {
+        "login": "third@example.com",
+        "name": "",
+        "avatar": "",
+        "timestamp": "1790000100",
+        "signature": "cf8c0d39383fd56be4ff9f8a93b69a6ced7b4e370fcec839b382f1c229c45855"
+      },
+      "expect": {
+        "ok": true,
+        "login": "third@example.com",
+        "name": "third@example.com",
+        "avatarUrl": null,
+        "ownerId": "acct_6a58a52f98cfdcb8e9f6335e03fa5dac"
+      }
+    },
+    {
+      "name": "stale-timestamp",
+      "tailscale": null,
+      "headers": {
+        "login": "parent@example.com",
+        "name": "Parent%20One",
+        "avatar": "",
+        "timestamp": "1789999799",
+        "signature": "fecb6724dec7bf6c7ae714f146b8645117689c023165855cc23703c20807f1ce"
+      },
+      "expect": {
+        "ok": false,
+        "reason": "stale"
+      }
+    },
+    {
+      "name": "future-timestamp",
+      "tailscale": null,
+      "headers": {
+        "login": "parent@example.com",
+        "name": "Parent%20One",
+        "avatar": "",
+        "timestamp": "1790000500",
+        "signature": "63a5897c850b42b29bcb69ee1c38bf87bff2f43229188908ec71d188a10e1134"
+      },
+      "expect": {
+        "ok": false,
+        "reason": "stale"
+      }
+    },
+    {
+      "name": "tampered-login",
+      "tailscale": null,
+      "headers": {
+        "login": "parent@example.com",
+        "name": "Student",
+        "avatar": "",
+        "timestamp": "1790000000",
+        "signature": "5a7954f92ad1259bc61061eaa3b18472ce6c357184fb2b71df17ce5878641c9e"
+      },
+      "expect": {
+        "ok": false,
+        "reason": "bad-signature"
+      }
+    },
+    {
+      "name": "wrong-secret",
+      "tailscale": null,
+      "headers": {
+        "login": "parent@example.com",
+        "name": "Parent%20One",
+        "avatar": "",
+        "timestamp": "1790000000",
+        "signature": "b5263f9d8ffdb17d7c869d0e8b1c55b031cad47dfd53ca798f5d75c06c1f968b"
+      },
+      "expect": {
+        "ok": false,
+        "reason": "bad-signature"
+      }
+    },
+    {
+      "name": "malformed-signature",
+      "tailscale": null,
+      "headers": {
+        "login": "parent@example.com",
+        "name": "",
+        "avatar": "",
+        "timestamp": "1790000000",
+        "signature": "not-hex"
+      },
+      "expect": {
+        "ok": false,
+        "reason": "malformed"
+      }
+    },
+    {
+      "name": "malformed-timestamp",
+      "tailscale": null,
+      "headers": {
+        "login": "parent@example.com",
+        "name": "",
+        "avatar": "",
+        "timestamp": "17900e0000",
+        "signature": "1fd65776d92237cc1bb9817d1e9c34754dc46f0f97714d47693b1376bba6d491"
+      },
+      "expect": {
+        "ok": false,
+        "reason": "malformed"
+      }
+    },
+    {
+      "name": "absent",
+      "tailscale": null,
+      "headers": {},
+      "expect": {
+        "ok": false,
+        "reason": "absent"
+      }
+    }
+  ]
+}

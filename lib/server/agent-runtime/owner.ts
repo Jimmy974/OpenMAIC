@@ -1,5 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
+import { isAuthModeEnabled, requireRequestIdentity } from '@/lib/server/auth/signed-identity';
+
 import { resolveSharedOwnerId } from './shared-owner';
 
 const ANONYMOUS_COOKIE = 'anonymous_id';
@@ -57,6 +59,12 @@ function anonymousCookieHeader(id: string): string {
  * explicit identity above still wins, so adding a real auth layer later does
  * not require clearing the variable first.
  *
+ * With signed-header sign-in on (`AUTH_MODE`), the owner is the verified
+ * member's account id and no cookie is minted; a request without a valid
+ * signed identity throws `UnauthenticatedError`, which `withRequestOwnerId`
+ * and `ownerIdOr401` answer with 401. Startup validation refuses sign-in
+ * together with a shared owner, so the two never compete.
+ *
  * Otherwise the identity comes from a valid anonymous cookie, or a fresh UUID
  * is minted. A mint is only useful when it is persisted, so `responseHeaders`
  * — the headers the caller returns to the client — is required: it receives
@@ -74,6 +82,8 @@ export function resolveRequestOwnerId(
   authenticatedOwnerId?: string,
 ): string {
   if (authenticatedOwnerId) return authenticatedOwnerId;
+
+  if (isAuthModeEnabled()) return requireRequestIdentity(req.headers).ownerId;
 
   const sharedOwnerId = resolveSharedOwnerId();
   if (sharedOwnerId) return sharedOwnerId;

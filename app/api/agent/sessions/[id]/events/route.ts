@@ -37,7 +37,7 @@ import type { NextRequest } from 'next/server';
 import { HOST_AGENT_LIFECYCLE as LIFECYCLE } from '@/lib/agent-runtime/lifecycle';
 import { isAgentRuntimeConfigured } from '@/lib/config/feature-flags';
 import { subscribeAgentEventWakeup } from '@/lib/server/agent-runtime/event-notify-bus';
-import { resolveRequestOwnerId } from '@/lib/server/agent-runtime/owner';
+import { ownerIdOr401 } from '@/lib/server/auth/responses';
 import { getAgentSessionStore } from '@/lib/server/agent-runtime/store';
 
 export const runtime = 'nodejs';
@@ -74,7 +74,8 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
   // integration must thread `authenticatedOwnerId` through here, or sessions
   // created under authenticated identities would be unreachable by their own
   // owner.
-  const ownerId = resolveRequestOwnerId(req, responseHeaders);
+  const ownerId = ownerIdOr401(req, responseHeaders);
+  if (ownerId instanceof Response) return ownerId;
   const store = await getAgentSessionStore();
   const meta = await store.getSession(id);
   if (!meta) {
