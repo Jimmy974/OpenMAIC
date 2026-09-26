@@ -14,12 +14,17 @@ import {
 } from '@/lib/quiz/persistence';
 import { getLearnerKey } from '@/lib/runtime/learner-key';
 import { getRuntimeStore } from '@/lib/runtime/store';
+import type { QuizSnapshot } from '@/lib/quiz/snapshot';
 
 export interface QuizAttemptPayload extends QuizAttemptSkeleton {
   payloadVersion: 1;
   phase: QuizAttemptPhase;
   answers: QuizAnswers;
   results?: QuestionResult[];
+  /** Sign-in builds only: the quiz's total points at submit (decision D26). */
+  totalPoints?: number;
+  /** Sign-in builds only: fingerprint of the question ids and points at submit. */
+  quizFingerprint?: string;
 }
 
 export interface QuizAttemptRecordInput {
@@ -31,6 +36,8 @@ export interface QuizAttemptRecordInput {
   results?: QuestionResult[];
   /** Begin a distinct retry even when the prior attempt has the same payload. */
   startNewAttempt?: boolean;
+  /** Stored with submitted and reviewed payloads when present (sign-in builds). */
+  snapshot?: QuizSnapshot;
 }
 
 export interface LegacyQuizAttemptInput {
@@ -485,6 +492,12 @@ export async function recordQuizAttempt(
         phase: input.phase,
         answers: input.answers,
         ...(input.results === undefined ? {} : { results: input.results }),
+        ...(input.snapshot === undefined || input.phase === 'draft'
+          ? {}
+          : {
+              totalPoints: input.snapshot.totalPoints,
+              quizFingerprint: input.snapshot.quizFingerprint,
+            }),
       };
       let rolloverIndex = 0;
       let sessionId = input.attemptId;

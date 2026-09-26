@@ -42,6 +42,7 @@ import {
   type QuizRuntimeGate,
   type QuizViewLifetime,
 } from '@/lib/quiz/view-state';
+import { quizSnapshotForSubmit } from '@/lib/quiz/snapshot';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -786,7 +787,11 @@ export function QuizView({ questions, sceneId, stageId }: QuizViewProps) {
     if (!attemptId) return;
     setPhase('submitting');
     await runQuizPersistenceTransition(
-      () => persistQuizSubmission({ stageId, sceneId, attemptId, answers }, runtimeWriter),
+      () =>
+        persistQuizSubmission(
+          { stageId, sceneId, attemptId, answers, snapshot: quizSnapshotForSubmit(questions) },
+          runtimeWriter,
+        ),
       viewLifetime,
       () => setPhase('grading'),
       (error) => {
@@ -794,7 +799,7 @@ export function QuizView({ questions, sceneId, stageId }: QuizViewProps) {
         setRuntimeGate({ status: 'error' });
       },
     );
-  }, [attemptId, answers, runtimeWriter, sceneId, stageId, viewLifetime]);
+  }, [attemptId, answers, questions, runtimeWriter, sceneId, stageId, viewLifetime]);
 
   // When entering grading phase, grade choice questions locally + call API for short-answer
   useEffect(() => {
@@ -828,7 +833,14 @@ export function QuizView({ questions, sceneId, stageId }: QuizViewProps) {
       }
       try {
         await persistQuizReview(
-          { stageId, sceneId, attemptId, answers, results: ordered },
+          {
+            stageId,
+            sceneId,
+            attemptId,
+            answers,
+            results: ordered,
+            snapshot: quizSnapshotForSubmit(questions),
+          },
           runtimeWriter,
         );
       } catch (error) {

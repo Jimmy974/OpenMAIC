@@ -17,8 +17,10 @@ import {
   configureAssetPoolStorage,
   type AssetPoolStorageOptions,
 } from '@/lib/media/asset-pool-config';
+import { getSignedInMember } from '@/lib/auth/client-member';
+import { isClientAuthModeEnabled } from '@/lib/auth/public-mode';
 import { assertRuntimeStorageConfigurable, configureRuntimeStorage } from '@/lib/runtime/config';
-import { getLearnerKey } from '@/lib/runtime/learner-key';
+import { getLearnerKey, LEARNER_KEY_KV_KEY } from '@/lib/runtime/learner-key';
 
 let deviceKv: BrowserKVStore | undefined;
 let learnerKeyPromise: Promise<string> | undefined;
@@ -27,16 +29,48 @@ export function isBrowserPersistenceEnabled(): boolean {
   return typeof window !== 'undefined' && process.env.NEXT_PUBLIC_PERSISTENCE === '1';
 }
 
+/**
+ * With signed-header sign-in the learner partition is the member's account
+ * key (the same on every device), not this device's anonymous key. Attempts
+ * this device made before sign-in are merged into the account once; the
+ * device key is removed only after the server accepted the merge.
+ */
+async function accountLearnerKey(): Promise<string> {
+  const member = await getSignedInMember();
+  if (!member) throw new Error('Sign-in required: no signed-in member for runtime storage');
+  void mergeDeviceLearnerKey(member.learnerKey).catch((error) => {
+    console.warn("Could not merge this device's earlier quiz attempts into the account", error);
+  });
+  return member.learnerKey;
+}
+
+async function mergeDeviceLearnerKey(accountKey: string): Promise<void> {
+  const kv = (deviceKv ??= new BrowserKVStore());
+  const deviceKey = await kv.get<string>(LEARNER_KEY_KV_KEY, 'device');
+  if (!deviceKey || !deviceKey.startsWith('anon:') || deviceKey === accountKey) return;
+  const token = process.env.NEXT_PUBLIC_PERSISTENCE_TOKEN;
+  await new HttpRuntimeStore({
+    baseUrl: '/api/persistence',
+    headers: () => ({
+      'x-learner-key': accountKey,
+      ...(token ? { authorization: `Bearer ${token}` } : {}),
+    }),
+  }).mergeLearner(deviceKey, accountKey);
+  await kv.remove(LEARNER_KEY_KV_KEY, 'device');
+}
+
 export function getPersistenceLearnerKey(): Promise<string> {
   if (!isBrowserPersistenceEnabled()) {
     return Promise.reject(new Error('Browser persistence is not enabled'));
   }
-  return (learnerKeyPromise ??= getLearnerKey((deviceKv ??= new BrowserKVStore())).catch(
-    (error) => {
-      learnerKeyPromise = undefined;
-      throw error;
-    },
-  ));
+  return (learnerKeyPromise ??= (
+    isClientAuthModeEnabled()
+      ? accountLearnerKey()
+      : getLearnerKey((deviceKv ??= new BrowserKVStore()))
+  ).catch((error) => {
+    learnerKeyPromise = undefined;
+    throw error;
+  }));
 }
 
 export async function getPersistenceRequestHeaders(): Promise<Record<string, string>> {

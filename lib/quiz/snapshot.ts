@@ -8,6 +8,8 @@
  * Client-safe and synchronous; the server computes the same fingerprint for
  * the current quiz scene.
  */
+import { isClientAuthModeEnabled } from '@/lib/auth/public-mode';
+
 export interface SnapshotQuestion {
   id: string;
   points?: number;
@@ -32,4 +34,20 @@ export function quizFingerprint(questions: readonly SnapshotQuestion[]): string 
     hash = Math.imul(hash, 0x01000193) >>> 0;
   }
   return `v1:${hash.toString(16).padStart(8, '0')}`;
+}
+
+export interface QuizSnapshot {
+  totalPoints: number;
+  quizFingerprint: string;
+}
+
+/**
+ * The snapshot to store with a submitted attempt: only in a sign-in build,
+ * so payloads without sign-in stay byte-for-byte what upstream writes.
+ */
+export function quizSnapshotForSubmit(
+  questions: readonly SnapshotQuestion[],
+): QuizSnapshot | undefined {
+  if (!isClientAuthModeEnabled()) return undefined;
+  return { totalPoints: quizTotalPoints(questions), quizFingerprint: quizFingerprint(questions) };
 }
