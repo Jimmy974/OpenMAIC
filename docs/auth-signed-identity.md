@@ -17,11 +17,14 @@ browser ─https─▶ tailscale serve (root, :443)
                    ▼
            identity bridge  127.0.0.1:3001  (scripts/identity-bridge.mjs, user service)
              1. peer socket must belong to uid 0 (tailscaled)   else 403
+                (full 4-tuple, ESTABLISHED, real inode in /proc/net/tcp)
              2. no untrusted host-network container is running  else 503
              3. drops inbound X-OpenMAIC-Identity-*
-             4. Tailscale-User-* ─▶ signed X-OpenMAIC-Identity-* (HMAC-SHA256)
+             4. unsafe cross-site requests (POST/PUT/…, WebSocket) refused (403)
+             5. Tailscale-User-* ─▶ signed X-OpenMAIC-Identity-* (HMAC-SHA256)
                    ▼
            OpenMAIC  127.0.0.1:3000  (container)
+             middleware verifies the signature (Web Crypto) and refuses cross-site writes
              every route verifies the signature and its age (5 minutes)
 ```
 
@@ -49,6 +52,15 @@ browser ─https─▶ tailscale serve (root, :443)
   about a second while any such container not listed in
   `BRIDGE_TRUSTED_HOST_NET` runs, and whenever it cannot tell (events stream
   down). The remaining sub-second race is accepted.
+
+- Because the bridge signs every request a member's browser makes, any other
+  website could otherwise make that browser post to this site as the member.
+  The bridge and the middleware both refuse unsafe requests (and WebSocket
+  upgrades) unless `Sec-Fetch-Site` is `same-origin`/`none` or `Origin` matches
+  the host. Non-browser clients (no `Origin`, no `Sec-Fetch-Site`) pass.
+- Publish the app port on loopback only (`127.0.0.1:3000:3000`, e.g. through
+  `docker-compose.override.yml` with `ports: !override`). Upstream's compose
+  file publishes `3000:3000` on every interface.
 
 ### Known residuals
 

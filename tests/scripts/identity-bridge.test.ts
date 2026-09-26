@@ -14,6 +14,9 @@ import {
   decodeRfc2047,
   findPeerUid,
   HostNetworkGuard,
+  hostNetworkNames,
+  procAddress,
+  refusesCrossSite,
   transformHeaders,
 } from '@/scripts/identity-bridge.mjs';
 import vectors from '@/tests/fixtures/signed-identity-vectors.json';
@@ -63,19 +66,93 @@ describe('bridge signing matches the app verifier', () => {
 });
 
 describe('peer uid from /proc/net/tcp', () => {
-  const tcp = `  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode
-   0: 0100007F:0BB9 00000000:0000 0A 00000000:00000000 00:00000000 00000000  1001        0 1 1 0 100 0 0 10 0
-   1: 0100007F:D2F0 0100007F:0BB9 01 00000000:00000000 00:00000000 00000000     0        0 2 1 0 20 4 30 10 -1
-   2: 0100007F:D2F4 0100007F:0BB9 01 00000000:00000000 00:00000000 00000000  1001        0 3 1 0 20 4 30 10 -1
-   3: 0100007F:0BB9 0100007F:D2F0 01 00000000:00000000 00:00000000 00000000  1001        0 4 1 0 20 4 30 10 -1`;
-  const tcp6 = `  sl  local_address                         remote_address                        st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode
-   0: 00000000000000000000000001000000:E000 00000000000000000000000001000000:0BB9 01 00000000:00000000 00:00000000 00000000   998        0 5 1 0 20 4 30 10 -1`;
+  // Columns: sl local rem st tx:rx tr:when retrnsmt uid timeout inode ...
+  const header =
+    '  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode';
+  const row = (local: string, remote: string, state: string, uid: number, inode: number) =>
+    `   0: ${local} ${remote} ${state} 00000000:00000000 00:00000000 00000000 ${uid} 0 ${inode} 1 0 20 4 30 10 -1`;
+  const bridge = { ourAddress: '127.0.0.1', ourPort: 3001 };
 
-  it('finds the peer row by (peer port, our port), over IPv4 and IPv6', () => {
-    expect(findPeerUid([tcp, tcp6], 0xd2f0, 3001)).toBe(0);
-    expect(findPeerUid([tcp, tcp6], 0xd2f4, 3001)).toBe(1001);
-    expect(findPeerUid([tcp, tcp6], 0xe000, 3001)).toBe(998);
-    expect(findPeerUid([tcp, tcp6], 0x1234, 3001)).toBeNull();
+  it('returns the uid of the live peer socket over IPv4 and IPv6', () => {
+    const tcp = [header, row('0100007F:D2F0', '0100007F:0BB9', '01', 0, 42)].join('\n');
+    const tcp6 = [
+      header,
+      row(
+        '00000000000000000000000001000000:E000',
+        '00000000000000000000000001000000:0BB9',
+        '01',
+        998,
+        43,
+      ),
+    ].join('\n');
+    expect(
+      findPeerUid([tcp, tcp6], { ...bridge, peerAddress: '127.0.0.1', peerPort: 0xd2f0 }),
+    ).toBe(0);
+    expect(
+      findPeerUid([tcp, tcp6], {
+        peerAddress: '::1',
+        peerPort: 0xe000,
+        ourAddress: '::1',
+        ourPort: 3001,
+      }),
+    ).toBe(998);
+    expect(
+      findPeerUid([tcp], { ...bridge, peerAddress: '127.0.0.1', peerPort: 0x1234 }),
+    ).toBeNull();
+  });
+
+  it('is not fooled by a TIME_WAIT row or another loopback address on the same port', () => {
+    const tcp = [
+      header,
+      // A closed attacker connection from 127.0.0.2:P, now TIME_WAIT: uid 0, inode 0.
+      row('0200007F:D2F4', '0100007F:0BB9', '06', 0, 0),
+      // tailscaled's live connection from 127.0.0.1:P.
+      row('0100007F:D2F4', '0100007F:0BB9', '01', 0, 77),
+      // The attacker's live connection from 127.0.0.3:P.
+      row('0300007F:D2F4', '0100007F:0BB9', '01', 1001, 78),
+    ].join('\n');
+    expect(findPeerUid([tcp], { ...bridge, peerAddress: '127.0.0.3', peerPort: 0xd2f4 })).toBe(
+      1001,
+    );
+    expect(
+      findPeerUid([tcp], { ...bridge, peerAddress: '127.0.0.2', peerPort: 0xd2f4 }),
+    ).toBeNull();
+    expect(findPeerUid([tcp], { ...bridge, peerAddress: '127.0.0.1', peerPort: 0xd2f4 })).toBe(0);
+  });
+
+  it('encodes addresses the way the kernel prints them', () => {
+    expect(procAddress('127.0.0.1')).toBe('0100007F');
+    expect(procAddress('::1')).toBe('00000000000000000000000001000000');
+    expect(procAddress('::ffff:127.0.0.1')).toBe('0000000000000000FFFF00000100007F');
+    expect(procAddress('not-an-ip')).toBeNull();
+  });
+});
+
+describe('host-network containers and cross-site requests', () => {
+  it('flags host networking and containers joined to a host-network container', () => {
+    expect(
+      hostNetworkNames([
+        { id: 'aaa111', name: 'hostnet', mode: 'host' },
+        { id: 'bbb222', name: 'sidecar', mode: 'container:hostnet' },
+        { id: 'ccc333', name: 'sidecar-by-id', mode: 'container:aaa1' },
+        { id: 'ddd444', name: 'app', mode: 'openmaic_default' },
+        { id: 'eee555', name: 'joined-bridge', mode: 'container:app' },
+      ]),
+    ).toEqual(['hostnet', 'sidecar', 'sidecar-by-id']);
+  });
+
+  it('refuses unsafe cross-site requests and allows same-origin and non-browser ones', () => {
+    const host = { host: 'family.example.ts.net' };
+    expect(refusesCrossSite('GET', { ...host, 'sec-fetch-site': 'cross-site' })).toBe(false);
+    expect(refusesCrossSite('POST', { ...host, 'sec-fetch-site': 'cross-site' })).toBe(true);
+    expect(refusesCrossSite('POST', { ...host, 'sec-fetch-site': 'same-site' })).toBe(true);
+    expect(refusesCrossSite('POST', { ...host, 'sec-fetch-site': 'same-origin' })).toBe(false);
+    expect(refusesCrossSite('DELETE', { ...host, origin: 'https://evil.example' })).toBe(true);
+    expect(refusesCrossSite('PUT', { ...host, origin: 'https://family.example.ts.net' })).toBe(
+      false,
+    );
+    expect(refusesCrossSite('POST', host)).toBe(false);
+    expect(refusesCrossSite('GET', { ...host, origin: 'https://evil.example' }, true)).toBe(true);
   });
 });
 
@@ -130,6 +207,35 @@ describe('host-network guard', () => {
     await h.guard.resync();
     expect(h.guard.allowed).toBe(true);
     h.guard.stop();
+  });
+
+  it('re-lists when an event arrives during a listing', async () => {
+    let calls = 0;
+    let release: () => void = () => {};
+    let onEvent = () => {};
+    const guard = new HostNetworkGuard({
+      listHostNetworkContainers: async () => {
+        calls += 1;
+        if (calls === 2) {
+          // The listing an event raced: taken before the container started.
+          await new Promise<void>((resolve) => (release = resolve));
+          return [];
+        }
+        return calls >= 3 ? ['late-hostnet'] : [];
+      },
+      subscribeEvents: (event: () => void) => {
+        onEvent = event;
+        return () => {};
+      },
+      resyncMs: 3_600_000,
+    });
+    await guard.start();
+    const inFlight = guard.resync();
+    onEvent();
+    release();
+    await inFlight;
+    expect(guard.state).toEqual({ status: 'violated', violations: ['late-hostnet'] });
+    guard.stop();
   });
 
   it('refuses when docker cannot be asked', async () => {
@@ -248,6 +354,17 @@ describe('live bridge', () => {
     socket.destroy();
     expect(received).toContain('101 Switching Protocols');
     expect(seen.at(-1)?.['x-openmaic-identity-login']).toBe('kid@x.y');
+  });
+
+  it('refuses a cross-site POST before it reaches the app', async () => {
+    const { port, seen } = await start();
+    const response = await fetch(`http://127.0.0.1:${port}/api/agent/sessions`, {
+      method: 'POST',
+      headers: { 'tailscale-user-login': 'kid@x.y', 'sec-fetch-site': 'cross-site' },
+      body: '{}',
+    });
+    expect(response.status).toBe(403);
+    expect(seen).toHaveLength(0);
   });
 
   it('answers 403 to a refused peer and 503 while the guard refuses', async () => {

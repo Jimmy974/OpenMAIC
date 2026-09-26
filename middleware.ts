@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 
+import { isCrossSiteUnsafeRequest, verifyIdentityHeadersEdge } from '@/lib/auth/edge-identity';
 import { isClientAuthModeEnabled } from '@/lib/auth/public-mode';
 import { isAgentRuntimeConfigured, isProWorkbenchEnabled } from '@/lib/config/feature-flags';
 import { verifyAccessTokenEdge } from '@/lib/server/access-token-edge';
@@ -25,20 +26,42 @@ h1{font-size:1.4rem}code{background:#f3f4f6;padding:.1rem .3rem;border-radius:.2
 <p>OpenMAIC here knows who you are from your Tailscale sign-in. Open it from a device that is signed in to Tailscale with your own account (not a shared or tagged device).</p>
 <p lang="zh-Hant">請喺已經用你自己 Tailscale 帳戶登入嘅裝置打開呢個網址。</p></body></html>`;
 
+function configuredSkewSeconds(): number {
+  const parsed = Number(process.env.AUTH_MAX_SKEW_SECONDS);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : 300;
+}
+
 /**
- * Signed-header sign-in's UX gate (design §3). It does not verify anything:
- * middleware may run where server secrets are not visible, so it only checks
- * that the front proxy attached an identity at all and turns the obvious
- * "not signed in" case into a readable page. Every route verifies the
- * signature itself; a forged header passes here and is refused there.
+ * Signed-header sign-in's gate (design §3). Routes verify the identity
+ * themselves; this turns the "not signed in" case into a readable page and,
+ * when the secret is visible to middleware, refuses forged or stale
+ * identities before they reach routes that do no check of their own. Where
+ * it is not visible, only the presence of a signature is checked.
+ *
+ * It also refuses unsafe cross-site requests: the front proxy signs every
+ * request a member's browser makes, whichever site started it.
  */
-function signInGate(request: NextRequest): NextResponse | undefined {
+async function signInGate(request: NextRequest): Promise<NextResponse | undefined> {
   if (!isClientAuthModeEnabled()) return undefined;
   const { pathname } = request.nextUrl;
   if (pathname === '/api/health') return undefined;
-  if (request.headers.has(IDENTITY_SIGNATURE_HEADER)) return undefined;
+  if (isCrossSiteUnsafeRequest(request.method, request.headers)) {
+    return NextResponse.json(
+      { success: false, errorCode: 'CROSS_SITE_REQUEST', error: 'Cross-site request refused' },
+      { status: 403 },
+    );
+  }
   if (isSkillApiPath(pathname) && request.headers.get('authorization')?.startsWith('Bearer ')) {
     return undefined;
+  }
+  if (request.headers.has(IDENTITY_SIGNATURE_HEADER)) {
+    const secret = process.env.AUTH_IDENTITY_SECRET ?? '';
+    if (
+      new TextEncoder().encode(secret).length < 32 ||
+      (await verifyIdentityHeadersEdge(request.headers, secret, configuredSkewSeconds()))
+    ) {
+      return undefined;
+    }
   }
   if (pathname.startsWith('/api/')) {
     return NextResponse.json(
@@ -66,7 +89,7 @@ export async function middleware(request: NextRequest) {
     return new NextResponse('Not found', { status: 404 });
   }
 
-  const signIn = signInGate(request);
+  const signIn = await signInGate(request);
   if (signIn) return signIn;
 
   const accessCode = process.env.ACCESS_CODE;

@@ -135,22 +135,72 @@ export function transformHeaders(inbound, secret, now = Math.floor(Date.now() / 
 
 const hexPort = (port) => port.toString(16).toUpperCase().padStart(4, '0');
 
+function ipv6Bytes(address) {
+  let text = address.split('%')[0];
+  const bytes = [];
+  const dotted = text.match(/(\d+\.\d+\.\d+\.\d+)$/);
+  let tail = [];
+  if (dotted) {
+    tail = dotted[1].split('.').map(Number);
+    text = text.slice(0, -dotted[1].length) + '0:0';
+  }
+  const [head, rest] = text.includes('::') ? text.split('::') : [text, undefined];
+  const headGroups = head ? head.split(':') : [];
+  const restGroups = rest !== undefined && rest !== '' ? rest.split(':') : [];
+  const fill = rest === undefined ? 0 : 8 - headGroups.length - restGroups.length;
+  const groups = [...headGroups, ...Array(fill).fill('0'), ...restGroups];
+  if (groups.length !== 8) return null;
+  for (const group of groups) {
+    const value = parseInt(group || '0', 16);
+    bytes.push((value >> 8) & 0xff, value & 0xff);
+  }
+  if (dotted) bytes.splice(12, 4, ...tail);
+  return bytes;
+}
+
+/**
+ * An address as /proc/net/tcp{,6} prints it: each 32-bit word in host byte
+ * order (little-endian on the architectures this runs on), upper-case hex.
+ */
+export function procAddress(address) {
+  const v4 = /^\d+\.\d+\.\d+\.\d+$/.test(address) ? address.split('.').map(Number) : null;
+  const bytes = v4 ?? ipv6Bytes(address);
+  if (!bytes || bytes.some((byte) => !Number.isInteger(byte) || byte < 0 || byte > 255))
+    return null;
+  let out = '';
+  for (let word = 0; word < bytes.length; word += 4) {
+    for (let index = 3; index >= 0; index -= 1) {
+      out += bytes[word + index].toString(16).toUpperCase().padStart(2, '0');
+    }
+  }
+  return out;
+}
+
+const TCP_ESTABLISHED = '01';
+
 /**
  * The uid owning the peer end of a local TCP connection, from the text of
- * /proc/net/tcp and /proc/net/tcp6: the peer's own row has local port = its
- * port and remote port = our listening port.
+ * /proc/net/tcp and /proc/net/tcp6. The peer's own row is the one whose
+ * local endpoint is the peer's address:port and whose remote endpoint is our
+ * address:port, and it must be a live socket: ESTABLISHED with a real inode.
+ * Matching ports alone is not enough: a TIME_WAIT row (always printed with
+ * uid 0 and inode 0) or a socket on another loopback address reusing the
+ * port would otherwise read as root.
  */
-export function findPeerUid(tables, peerPort, ourPort) {
-  const local = hexPort(peerPort);
-  const remote = hexPort(ourPort);
+export function findPeerUid(tables, { peerAddress, peerPort, ourAddress, ourPort }) {
+  const peer = procAddress(peerAddress);
+  const ours = procAddress(ourAddress);
+  if (!peer || !ours) return null;
+  const local = `${peer}:${hexPort(peerPort)}`;
+  const remote = `${ours}:${hexPort(ourPort)}`;
   for (const text of tables) {
     for (const line of String(text).split('\n').slice(1)) {
       const cols = line.trim().split(/\s+/);
-      if (cols.length < 8) continue;
-      if (cols[1].split(':').pop() === local && cols[2].split(':').pop() === remote) {
-        const uid = Number(cols[7]);
-        return Number.isInteger(uid) ? uid : null;
-      }
+      if (cols.length < 10) continue;
+      if (cols[1] !== local || cols[2] !== remote) continue;
+      if (cols[3] !== TCP_ESTABLISHED || cols[9] === '0') continue;
+      const uid = Number(cols[7]);
+      return Number.isInteger(uid) ? uid : null;
     }
   }
   return null;
@@ -208,6 +258,7 @@ export class HostNetworkGuard {
     this.timers = new Set();
     this.stopped = false;
     this.syncing = null;
+    this.dirty = false;
   }
 
   get allowed() {
@@ -250,23 +301,49 @@ export class HostNetworkGuard {
       },
     );
     this.streamUp = true;
+    // `docker events` only reports what happens after it has attached to the
+    // daemon; a container started in between is caught by this second look.
+    const settle = setTimeout(() => {
+      this.timers.delete(settle);
+      void this.resync();
+    }, 1_000);
+    settle.unref?.();
+    this.timers.add(settle);
   }
 
+  /**
+   * Re-list containers. A request that arrives while a listing is in flight
+   * marks it dirty and the listing runs again: that listing may have been
+   * taken before the container the new event is about had started.
+   */
   resync() {
-    this.syncing ??= (async () => {
+    if (this.syncing) {
+      this.dirty = true;
+      return this.syncing;
+    }
+    this.syncing = (async () => {
       try {
-        const names = await this.list();
-        const violations = names.filter((name) => !this.trusted.has(name));
-        if (!this.streamUp) this.setState({ status: 'lost', violations });
-        else this.setState({ status: violations.length ? 'violated' : 'ok', violations });
-      } catch (error) {
-        this.setState({ status: 'lost', violations: [] });
-        this.log(`host-network guard: docker unavailable (${error.message})`);
+        do {
+          this.dirty = false;
+          await this.syncOnce();
+        } while (this.dirty && !this.stopped);
       } finally {
         this.syncing = null;
       }
     })();
     return this.syncing;
+  }
+
+  async syncOnce() {
+    try {
+      const names = await this.list();
+      const violations = names.filter((name) => !this.trusted.has(name));
+      if (!this.streamUp) this.setState({ status: 'lost', violations });
+      else this.setState({ status: violations.length ? 'violated' : 'ok', violations });
+    } catch (error) {
+      this.setState({ status: 'lost', violations: [] });
+      this.log(`host-network guard: docker unavailable (${error.message})`);
+    }
   }
 
   setState(next) {
@@ -298,6 +375,26 @@ function run(bin, args) {
   });
 }
 
+/**
+ * Names of running containers that share the host network namespace: host
+ * networking itself, or `container:<x>` joined to a container that has it.
+ */
+export function hostNetworkNames(rows) {
+  const byRef = new Map();
+  for (const row of rows) {
+    byRef.set(row.id, row);
+    byRef.set(row.name, row);
+  }
+  const resolve = (row, depth = 0) => {
+    if (row.mode === 'host') return true;
+    if (!row.mode.startsWith('container:') || depth > 5) return false;
+    const ref = row.mode.slice('container:'.length);
+    const target = byRef.get(ref) ?? rows.find((candidate) => candidate.id.startsWith(ref)) ?? null;
+    return target ? resolve(target, depth + 1) : false;
+  };
+  return rows.filter((row) => resolve(row)).map((row) => row.name);
+}
+
 export function dockerSources(bin = 'docker') {
   return {
     async listHostNetworkContainers() {
@@ -306,14 +403,15 @@ export function dockerSources(bin = 'docker') {
       const lines = await run(bin, [
         'inspect',
         '--format',
-        '{{.Name}} {{.HostConfig.NetworkMode}}',
+        '{{.Id}} {{.Name}} {{.HostConfig.NetworkMode}}',
         ...ids,
       ]);
-      return lines
+      const rows = lines
         .split('\n')
         .map((line) => line.trim().split(/\s+/))
-        .filter(([, mode]) => mode === 'host')
-        .map(([name]) => name.replace(/^\//, ''));
+        .filter((row) => row.length === 3)
+        .map(([id, name, mode]) => ({ id, name: name.replace(/^\//, ''), mode }));
+      return hostNetworkNames(rows);
     },
     subscribeEvents(onEvent, onEnd) {
       const child = spawn(
@@ -352,6 +450,31 @@ export function dockerSources(bin = 'docker') {
 
 // ─── Proxy ───────────────────────────────────────────────────────────────────
 
+const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
+
+/**
+ * Whether to refuse a request as cross-site. The bridge attaches the member's
+ * identity to every request their browser makes, so without this any other
+ * website could make a member's browser POST to this site as them (the
+ * SameSite cookie upstream relied on no longer decides who is asking).
+ * Unsafe methods and WebSocket upgrades must come from this origin; requests
+ * with neither Sec-Fetch-Site nor Origin (non-browser clients) pass.
+ */
+export function refusesCrossSite(method, headers, isUpgrade = false) {
+  if (!isUpgrade && SAFE_METHODS.has(String(method).toUpperCase())) return false;
+  const site = single(headers['sec-fetch-site']);
+  if (site) return site !== 'same-origin' && site !== 'none';
+  const origin = single(headers.origin);
+  if (origin === undefined) return false;
+  try {
+    const originHost = new URL(origin).host;
+    const hosts = [single(headers.host), single(headers['x-forwarded-host'])];
+    return !hosts.includes(originHost);
+  } catch {
+    return true;
+  }
+}
+
 function sendPlain(res, status, text) {
   res.writeHead(status, {
     'content-type': 'text/plain; charset=utf-8',
@@ -384,6 +507,9 @@ export function createBridge({ upstream, secret, peerCheck, guard, log = () => {
     }
     if (!guard.allowed)
       return sendPlain(res, 503, 'Service unavailable: identity bridge guard is not satisfied');
+    if (refusesCrossSite(req.method, req.headers)) {
+      return sendPlain(res, 403, 'Forbidden: cross-site request');
+    }
 
     const upstreamReq = http.request(
       {
@@ -416,7 +542,11 @@ export function createBridge({ upstream, secret, peerCheck, guard, log = () => {
   });
 
   server.on('upgrade', (req, socket, head) => {
-    if (!socketAllowed(req.socket) || !guard.allowed) {
+    if (
+      !socketAllowed(req.socket) ||
+      !guard.allowed ||
+      refusesCrossSite(req.method, req.headers, true)
+    ) {
       socket.end('HTTP/1.1 403 Forbidden\r\nconnection: close\r\n\r\n');
       return;
     }
@@ -491,7 +621,12 @@ function main() {
     peerCheck: anyPeer
       ? () => true
       : (socket) => {
-          const uid = findPeerUid(readProcTables(), socket.remotePort, socket.localPort);
+          const uid = findPeerUid(readProcTables(), {
+            peerAddress: socket.remoteAddress ?? '',
+            peerPort: socket.remotePort ?? 0,
+            ourAddress: socket.localAddress ?? '',
+            ourPort: socket.localPort ?? 0,
+          });
           if (uid !== 0) log(`refused a connection from a non-root peer (uid ${uid ?? 'unknown'})`);
           return uid === 0;
         },
