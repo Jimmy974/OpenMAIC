@@ -12,6 +12,14 @@ import {
 } from '@/lib/server/classroom-storage';
 import { sanitizeSceneContent } from '@/lib/server/sanitize-scene-content';
 import { createLogger } from '@/lib/logger';
+import {
+  classroomCallerOr401,
+  classroomCreatorOwnerId,
+  classroomReadGate,
+  recordServiceClassroom,
+  skillApiWriteGate,
+} from '@/lib/server/auth/classroom-access';
+import { isAuthModeEnabled } from '@/lib/server/auth/signed-identity';
 
 const log = createLogger('Classroom API');
 
@@ -21,6 +29,9 @@ function describeSceneIssue(issue: { path: string; message: string }): string {
 }
 
 export async function POST(request: NextRequest) {
+  // Signed-header sign-in: admins and the skill service token only (D18).
+  const denied = skillApiWriteGate(request);
+  if (denied) return denied;
   let stageId: string | undefined;
   let sceneCount: number | undefined;
   try {
@@ -113,6 +124,11 @@ export async function POST(request: NextRequest) {
       return apiError(API_ERROR_CODES.INVALID_REQUEST, 409, 'Classroom id collision');
     }
 
+    if (isAuthModeEnabled()) {
+      const caller = classroomCallerOr401(request);
+      const creator = caller instanceof Response ? undefined : classroomCreatorOwnerId(caller);
+      if (creator) await recordServiceClassroom(persisted.id, creator);
+    }
     return apiSuccess({ id: persisted.id, url: persisted.url }, 201);
   } catch (error) {
     log.error(
@@ -143,6 +159,9 @@ export async function GET(request: NextRequest) {
     if (!isValidClassroomId(id)) {
       return apiError(API_ERROR_CODES.INVALID_REQUEST, 400, 'Invalid classroom id');
     }
+
+    const denied = await classroomReadGate(request, id);
+    if (denied) return denied;
 
     const classroom = await readClassroom(id);
     if (!classroom) {

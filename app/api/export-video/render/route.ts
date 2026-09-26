@@ -5,6 +5,7 @@ import { resolveRenderServiceUrl } from '@/lib/server/render-service';
 import { capBodyStream } from '@/lib/server/capped-stream';
 import { clientIdentity } from '@/lib/server/client-identity';
 import { createLogger } from '@/lib/logger';
+import { exportSubmitter, recordExportJob } from '@/lib/server/auth/export-jobs';
 
 const log = createLogger('ExportVideo Render API');
 
@@ -32,6 +33,11 @@ export async function POST(req: NextRequest) {
   if ('error' in resolved) {
     return apiError('PROVIDER_DISABLED', 501, 'Render service is not configured');
   }
+
+  // Signed-header sign-in: only a member may render, and the job is recorded
+  // as theirs so status, download and cancel can be limited to them (D24).
+  const submitter = exportSubmitter(req);
+  if (submitter instanceof Response) return submitter;
 
   // Fast-path reject an oversized body by its declared length. This is only a
   // courtesy 413 for honest clients — `Content-Length` is client-supplied and
@@ -87,6 +93,9 @@ export async function POST(req: NextRequest) {
       return apiError(code, status, 'Render service rejected the request', detail, reason);
     }
 
+    if (submitter && typeof data.jobId === 'string') {
+      await recordExportJob(data.jobId, submitter.ownerId, req.nextUrl.searchParams.get('stageId'));
+    }
     return apiSuccess({ jobId: data.jobId, pollIntervalMs: 3000 }, 202);
   } catch (error) {
     // A cap trip aborts the forwarded stream, surfacing here as a fetch error.

@@ -6,12 +6,16 @@ import {
 } from '@/lib/server/classroom-job-store';
 import { buildRequestOrigin } from '@/lib/server/classroom-storage';
 import { createLogger } from '@/lib/logger';
+import { skillApiWriteGate } from '@/lib/server/auth/classroom-access';
 
 const log = createLogger('ClassroomJob API');
 
 export const dynamic = 'force-dynamic';
 
 export async function GET(req: NextRequest, context: { params: Promise<{ jobId: string }> }) {
+  // Signed-header sign-in: admins and the skill service token only (D18).
+  const denied = skillApiWriteGate(req);
+  if (denied) return denied;
   let resolvedJobId: string | undefined;
   try {
     const { jobId } = await context.params;

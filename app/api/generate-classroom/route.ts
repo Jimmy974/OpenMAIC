@@ -6,6 +6,7 @@ import { runClassroomGenerationJob } from '@/lib/server/classroom-job-runner';
 import { createClassroomGenerationJob } from '@/lib/server/classroom-job-store';
 import { buildRequestOrigin } from '@/lib/server/classroom-storage';
 import { createLogger } from '@/lib/logger';
+import { skillApiWriteGate } from '@/lib/server/auth/classroom-access';
 
 const log = createLogger('GenerateClassroom API');
 
@@ -27,6 +28,9 @@ function isValidPdfContent(value: unknown): value is PdfContent {
 }
 
 export async function POST(req: NextRequest) {
+  // Signed-header sign-in: admins and the skill service token only (D18).
+  const denied = skillApiWriteGate(req);
+  if (denied) return denied;
   let requirementSnippet: string | undefined;
   try {
     const rawBody = (await req.json()) as Partial<GenerateClassroomInput>;

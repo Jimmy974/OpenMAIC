@@ -4,6 +4,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { CLASSROOMS_DIR, isValidClassroomId } from '@/lib/server/classroom-storage';
 import { parseRangeHeader } from '@/lib/server/http-range';
 import { createLogger } from '@/lib/logger';
+import { classroomReadGate } from '@/lib/server/auth/classroom-access';
+import { isAuthModeEnabled } from '@/lib/server/auth/signed-identity';
 
 const log = createLogger('ClassroomMedia');
 
@@ -21,7 +23,9 @@ const MIME_TYPES: Record<string, string> = {
   '.aac': 'audio/aac',
 };
 
-const CACHE_HEADERS = { 'Cache-Control': 'public, max-age=86400, immutable' } as const;
+const PUBLIC_CACHE_HEADERS = { 'Cache-Control': 'public, max-age=86400, immutable' } as const;
+// With signed-header sign-in the bytes are per-member: no shared caches.
+const PRIVATE_CACHE_HEADERS = { 'Cache-Control': 'private, max-age=86400, immutable' } as const;
 
 /** Bridge a fs ReadStream into a web ReadableStream, propagating errors and cancel. */
 function toWebStream(stream: ReadStream): ReadableStream {
@@ -59,6 +63,10 @@ export async function GET(
   if (subDir !== 'media' && subDir !== 'audio') {
     return NextResponse.json({ error: 'Invalid path' }, { status: 404 });
   }
+
+  const denied = await classroomReadGate(req, classroomId);
+  if (denied) return denied;
+  const CACHE_HEADERS = isAuthModeEnabled() ? PRIVATE_CACHE_HEADERS : PUBLIC_CACHE_HEADERS;
 
   const filePath = path.join(CLASSROOMS_DIR, classroomId, ...pathSegments);
   const resolvedBase = path.resolve(CLASSROOMS_DIR, classroomId);
