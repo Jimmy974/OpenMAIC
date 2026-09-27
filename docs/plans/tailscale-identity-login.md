@@ -290,7 +290,7 @@ D) Defer
 State: approved
 Actual answer: B) Keep current (D23, 2026-09-26)
 Accepted scope: none. Pi chat whiteboard keeps the development-token + client `x-learner-key` principal; documented as a known residual in `docs/auth-signed-identity.md` (a signed-in member who knows the public dev token could write another learner's whiteboard partition). The client sends the account learner key in auth mode, so normal use stays per-person.
-History: none
+History: superseded 2026-09-27 by the user ("Pi 白板 pls") after the pre-deploy security review showed `acct_` learner keys are derivable from a member's email. Now option A: in auth mode `lib/persistence/server-auth.ts` derives the principal (Pi chat whiteboard, visibility callback, server asset resolution) from the signed identity and ignores the dev token and `x-learner-key`; tests in `tests/server/auth/pi-whiteboard-principal.test.ts`.
 
 ### O2: Server-rendered video exports are readable by job id
 Finding: 9, P1, confidence 9/10, `app/api/export-video/render/[jobId]/download/route.ts:20` (GET streams `${render}/render/${jobId}/download` with no identity check); status and cancel routes likewise; reviewer: Codex outside voice (verified by parent)
@@ -516,7 +516,7 @@ No issues found: `canReadStage` adds one primary-key lookup on `course_shares`; 
 - Admins editing or deleting members' courses (v1 read-only; open question in design).
 - Recipient-side "hide share" (owner controls shares in v1).
 - Company deployment with company SSO (TODOS.md, D28).
-- Pi chat whiteboard signed principal (kept on dev token by D23; documented residual).
+- ~~Pi chat whiteboard signed principal (kept on dev token by D23)~~ — done 2026-09-27, D23 superseded.
 - Material byte migration for `owner_material` (preflight refuses; none exist).
 - Docker network changes (removed from v1 after spec review R1-21).
 

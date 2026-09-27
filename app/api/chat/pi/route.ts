@@ -30,6 +30,7 @@ import type { ThinkingConfig } from '@/lib/types/provider';
 import type { StatelessChatRequest } from '@/lib/types/chat';
 import { resolveClassroomWebSearchConfig } from '@/lib/server/web-search-config';
 import { authenticatePersistenceHeaders } from '@/lib/persistence/server-auth';
+import { isAuthModeEnabled } from '@/lib/server/auth/signed-identity';
 import { getServerPersistenceProvider } from '@/lib/persistence/server-provider';
 import { createWhiteboardRuntimeService } from '@/lib/whiteboard/runtime/store';
 import { hasNativeWhiteboardAction } from '@/lib/chat/pi/tools/native-whiteboard';
@@ -194,7 +195,9 @@ export async function POST(req: NextRequest) {
       validRequestStartStageId &&
       process.env.NEXT_PUBLIC_PERSISTENCE === '1' &&
       process.env.DATABASE_URL &&
-      process.env.PERSISTENCE_DEV_TOKEN
+      // Sign-in mode authenticates from the signed identity instead of the
+      // development token (lib/persistence/server-auth.ts).
+      (process.env.PERSISTENCE_DEV_TOKEN || isAuthModeEnabled())
     ) {
       const principal = authenticatePersistenceHeaders(req.headers);
       const learnerKey = principal?.learnerKey;

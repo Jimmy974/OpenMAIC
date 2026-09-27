@@ -14,6 +14,12 @@
  * Suitable only for localhost or trusted-network, single-user deployments.
  * Production must replace this module with real session verification and
  * derive learner identity from server-controlled claims.
+ *
+ * With signed-header sign-in (`AUTH_MODE`) it does exactly that: every caller
+ * (the Pi chat whiteboard, its visibility callback, server asset resolution)
+ * gets the verified member's account learner key, and the development token
+ * and the client's `x-learner-key` are ignored. No valid identity, no
+ * principal.
  */
 import { createHash, timingSafeEqual } from 'node:crypto';
 import type { IncomingMessage } from 'node:http';
@@ -22,6 +28,7 @@ import type { AssetPrincipal } from '@openmaic/storage';
 import type { RuntimeHttpPrincipal } from '@openmaic/storage/server';
 
 import { createLogger } from '@/lib/logger';
+import { isAuthModeEnabled, readRequestIdentity } from '@/lib/server/auth/signed-identity';
 
 const log = createLogger('PersistenceAuth');
 
@@ -100,7 +107,14 @@ function authenticatePersistenceCredentials(
   return { key: SHARED_ASSET_PRINCIPAL, ...(learnerKey ? { learnerKey } : {}) };
 }
 
+/** The principal for a verified signed identity: the shared asset partition and the account key. */
+function signedIdentityPrincipal(headers: Pick<Headers, 'get'>): PersistencePrincipal | undefined {
+  const identity = readRequestIdentity(headers);
+  return identity ? { key: SHARED_ASSET_PRINCIPAL, learnerKey: identity.learnerKey } : undefined;
+}
+
 export function authenticatePersistenceHeaders(headers: Headers): PersistencePrincipal | undefined {
+  if (isAuthModeEnabled()) return signedIdentityPrincipal(headers);
   return authenticatePersistenceCredentials(
     headers.get('authorization') ?? undefined,
     headers.get('x-learner-key') ?? undefined,
@@ -110,6 +124,11 @@ export function authenticatePersistenceHeaders(headers: Headers): PersistencePri
 export async function authenticatePersistenceRequest(
   req: IncomingMessage,
 ): Promise<PersistencePrincipal | undefined> {
+  if (isAuthModeEnabled()) {
+    return signedIdentityPrincipal({
+      get: (name: string) => singleHeader(req.headers[name.toLowerCase()]) ?? null,
+    });
+  }
   return authenticatePersistenceCredentials(
     singleHeader(req.headers.authorization),
     singleHeader(req.headers['x-learner-key']),

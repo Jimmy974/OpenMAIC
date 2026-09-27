@@ -66,9 +66,6 @@ browser ─https─▶ tailscale serve (root, :443)
 
 - Quiz scores are graded in the browser (upstream behaviour); a member could
   submit a forged score for themselves.
-- The Pi chat whiteboard keeps upstream's development-token principal
-  (decision D23). A signed-in member who knows the public dev token could
-  write another learner's whiteboard partition.
 - Persistence asset bytes are one shared partition (upstream). Asset ids are
   unguessable and only appear inside access-controlled documents.
 - Anyone who learns another device's random anonymous learner key could claim
@@ -96,8 +93,10 @@ Build (`.env` compose build args): `NEXT_PUBLIC_AUTH_MODE=signed-header` and
 The app refuses to boot when the runtime `AUTH_MODE` and the build's
 `NEXT_PUBLIC_AUTH_MODE` differ, when persistence is missing, when the secret is
 short, when there is no admin, or together with `PERSISTENCE_SHARED_OWNER_ID`.
-`PERSISTENCE_DEV_TOKEN` is no longer required (the Pi whiteboard still uses
-it). Server publish/unpublish is disabled; sharing replaces it.
+`PERSISTENCE_DEV_TOKEN` is not used in this mode: runtime data, the Pi chat
+whiteboard and server asset reads all take the learner from the signed
+identity, and the client's `x-learner-key` is ignored. Server
+publish/unpublish is disabled; sharing replaces it.
 
 Bridge (`~/source/identity-bridge/.env`, mode 0600):
 
