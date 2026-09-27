@@ -9,7 +9,7 @@ submit a job, poll it, and send the person the classroom link.
 
 | | |
 |---|---|
-| Base URL | `https://debian.taild5f6fb.ts.net` (Tailscale only: your machine must be on the tailnet). On the server itself: `http://127.0.0.1:3000`. |
+| Base URL | `https://<your-host>.<tailnet>.ts.net` (Tailscale only: your machine must be on the tailnet). On the server itself: `http://127.0.0.1:3000`. |
 | Auth | Header `Authorization: Bearer $OPENMAIC_TOKEN` on every request. The operator gives you the token (stored on the server in `~/source/identity-bridge/service-token.txt`). Never print or log it. |
 
 Do not send `Origin` or `Sec-Fetch-Site` headers.
@@ -79,7 +79,7 @@ make one classroom per chapter.
   "success": true,
   "jobId": "abc123",
   "status": "queued",
-  "pollUrl": "https://debian.taild5f6fb.ts.net/api/generate-classroom/abc123",
+  "pollUrl": "https://<your-host>.<tailnet>.ts.net/api/generate-classroom/abc123",
   "pollIntervalMs": 5000,
   "attachments": { "files": 1, "textChars": 1830, "images": 2 }
 }
@@ -112,7 +112,7 @@ On success:
 ```json
 { "status": "succeeded", "done": true,
   "result": { "classroomId": "Xy12AbCd9Q",
-              "url": "https://debian.taild5f6fb.ts.net/classroom/Xy12AbCd9Q",
+              "url": "https://<your-host>.<tailnet>.ts.net/classroom/Xy12AbCd9Q",
               "scenesCount": 12 } }
 ```
 
