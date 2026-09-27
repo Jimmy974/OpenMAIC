@@ -9,6 +9,7 @@ import {
   isAbortError,
   PBLGenerationError,
   withGenerationRetry,
+  buildVisionUserContent,
   type AICallFn,
   type AgentInfo,
 } from '@openmaic/generation';
@@ -43,7 +44,12 @@ import {
   type ClassroomTtsCoverage,
 } from '@/lib/server/classroom-media-generation';
 import { buildVideoManifestFromOutlines } from '@/lib/media/video-manifest';
-import type { UserRequirements } from '@/lib/types/generation';
+import type { ImageMapping, PdfImage, UserRequirements } from '@/lib/types/generation';
+import { MAX_VISION_IMAGES } from '@/lib/constants/generation';
+import { sortDocumentImagesForVision } from '@/lib/document/bundle';
+import type { AttachmentBundle } from '@/lib/server/attachments/extract';
+import { persistClassroomMediaBytes } from '@/lib/server/classroom-media-bytes';
+import { saveClassroomToLibrary, type LibraryTarget } from '@/lib/server/auth/library';
 import type { Scene, Stage } from '@/lib/types/stage';
 import { AGENT_COLOR_PALETTE, AGENT_DEFAULT_AVATARS } from '@/lib/constants/agent-defaults';
 
@@ -67,6 +73,20 @@ export interface GenerateClassroomInput {
   enableVideoGeneration?: boolean;
   enableTTS?: boolean;
   agentMode?: 'default' | 'generate';
+  /**
+   * Attachments already read by the route (text + pictures as data URLs),
+   * merged like the web page merges course material. Kept in memory only;
+   * the job file stores a summary.
+   */
+  attachments?: AttachmentBundle;
+  /** A server model (`provider:model`), validated by the route. Default: DEFAULT_MODEL. */
+  modelString?: string;
+  /** Short learner description, like the web page's "Hi, Learner" bio. */
+  studentProfile?: string;
+  /** Signed-header sign-in: also save the result as a course in this member's library. */
+  library?: LibraryTarget;
+  /** The generation job, recorded on library courses as their producer. */
+  jobId?: string;
 }
 
 export type ClassroomGenerationStep =
@@ -272,8 +292,9 @@ export async function generateClassroom(
     providerId,
     apiKey,
     thinkingConfig: classroomThinking,
-  } = await resolveModel({ stage: 'generate-classroom' });
+  } = await resolveModel({ stage: 'generate-classroom', modelString: input.modelString });
   log.info(`Using server-configured model: ${modelString}`);
+  const hasVision = !!modelInfo?.capabilities?.vision;
 
   // Fail fast if the resolved provider has no API key configured
   if (isProviderKeyRequired(providerId) && !apiKey) {
@@ -291,13 +312,15 @@ export async function generateClassroom(
   let searchQueryModel = languageModel;
   let searchQueryThinking = classroomThinking;
 
-  const aiCall: AICallFn = async (systemPrompt, userPrompt, _images) => {
+  const aiCall: AICallFn = async (systemPrompt, userPrompt, images) => {
     const result = await callLLM(
       {
         model: languageModel,
         messages: [
           { role: 'system', content: systemPrompt },
-          { role: 'user', content: userPrompt },
+          images?.length && hasVision
+            ? { role: 'user', content: buildVisionUserContent(userPrompt, images) }
+            : { role: 'user', content: userPrompt },
         ],
         maxOutputTokens: modelInfo?.outputWindow,
       },
@@ -327,6 +350,7 @@ export async function generateClassroom(
       model: LanguageModel;
       outputWindow?: number;
       thinking: ThinkingConfig | undefined;
+      vision: boolean;
     }
   >();
 
@@ -336,6 +360,7 @@ export async function generateClassroom(
     model: LanguageModel;
     outputWindow?: number;
     thinking: ThinkingConfig | undefined;
+    vision: boolean;
   }> => {
     const cached = stageModelCache.get(stage);
     if (cached) return cached;
@@ -346,6 +371,7 @@ export async function generateClassroom(
         model: languageModel,
         outputWindow: modelInfo?.outputWindow,
         thinking: classroomThinking,
+        vision: hasVision,
       };
       stageModelCache.set(stage, fallback);
       return fallback;
@@ -357,6 +383,7 @@ export async function generateClassroom(
         model: resolved.model,
         outputWindow: resolved.modelInfo?.outputWindow,
         thinking: resolved.thinkingConfig,
+        vision: !!resolved.modelInfo?.capabilities?.vision,
       };
       log.info(`Stage "${stage}" routed to model: ${resolved.modelString}`);
       stageModelCache.set(stage, entry);
@@ -371,6 +398,7 @@ export async function generateClassroom(
         model: languageModel,
         outputWindow: modelInfo?.outputWindow,
         thinking: classroomThinking,
+        vision: hasVision,
       };
       stageModelCache.set(stage, fallback);
       return fallback;
@@ -386,14 +414,16 @@ export async function generateClassroom(
   // aiCall closure, and consumes the route's thinking config separately.
   const resolveSceneContentCall = async (outlineType?: string) => {
     const stage = (outlineType ? `scene-content:${outlineType}` : 'scene-content') as LlmStage;
-    const { model, outputWindow, thinking } = await resolveStageModel(stage);
-    const aiCall: AICallFn = async (systemPrompt, userPrompt, _images) => {
+    const { model, outputWindow, thinking, vision } = await resolveStageModel(stage);
+    const aiCall: AICallFn = async (systemPrompt, userPrompt, images) => {
       const result = await callLLM(
         {
           model,
           messages: [
             { role: 'system', content: systemPrompt },
-            { role: 'user', content: userPrompt },
+            images?.length && vision
+              ? { role: 'user', content: buildVisionUserContent(userPrompt, images) }
+              : { role: 'user', content: userPrompt },
           ],
           maxOutputTokens: outputWindow,
           maxRetries: 0,
@@ -404,7 +434,7 @@ export async function generateClassroom(
       );
       return result.text;
     };
-    return { aiCall, model, thinking };
+    return { aiCall, model, thinking, vision };
   };
 
   // agent-profiles routes via the `agent-profiles` stage (matches the browser
@@ -476,9 +506,15 @@ export async function generateClassroom(
 
   const requirements: UserRequirements = {
     requirement,
+    ...(input.studentProfile ? { userBio: input.studentProfile } : {}),
   };
   const vocationalActive = resolveVocationalActive(requirements);
-  const pdfText = pdfContent?.text || undefined;
+  const pdfText = pdfContent?.text || input.attachments?.text || undefined;
+  // Attachment pictures: data URLs for the model to look at.
+  const sourceImages: PdfImage[] = input.attachments?.images ?? [];
+  const sourceVisionMapping: ImageMapping = Object.fromEntries(
+    sourceImages.map((image) => [image.id, image.src]),
+  );
 
   await options.onProgress?.({
     step: 'researching',
@@ -550,9 +586,12 @@ export async function generateClassroom(
   const outlinesResult = await generateSceneOutlinesFromRequirements(
     requirements,
     pdfText,
-    undefined,
+    sourceImages.length > 0 ? sourceImages : undefined,
     aiCall,
     {
+      ...(sourceImages.length > 0 && hasVision
+        ? { visionEnabled: true, imageMapping: sourceVisionMapping }
+        : {}),
       imageGenerationEnabled: input.enableImageGeneration,
       videoGenerationEnabled: input.enableVideoGeneration,
       researchContext,
@@ -633,6 +672,26 @@ export async function generateClassroom(
     const store = createInMemoryStore(stage);
     const api = createStageAPI(store);
 
+    // Attachment pictures that slides may show: stored with the classroom's
+    // media so the slide `src` is a durable URL, while the model keeps
+    // seeing the in-memory bytes.
+    const sourceSlideMapping: ImageMapping = {};
+    for (const image of sourceImages) {
+      const match = image.src.match(/^data:([^;]+);base64,(.+)$/);
+      if (!match) continue;
+      try {
+        sourceSlideMapping[image.id] = await persistClassroomMediaBytes({
+          stageId,
+          bytes: Buffer.from(match[2]!, 'base64'),
+          mime: match[1]!,
+          prefix: 'source',
+          signal: options.signal,
+        });
+      } catch (error) {
+        log.warn(`Could not store attachment picture ${image.id}; slides will not show it`, error);
+      }
+    }
+
     log.info('Stage 2: Generating scene content and actions...');
     let generatedScenes = 0;
 
@@ -670,11 +729,39 @@ export async function generateClassroom(
       // gets the provider-bound AICallFn and the app injects its agentic PBL loop
       // as the classified fallback, preserving single-call → loop routing.
       const contentCall = await resolveSceneContentCall(safeOutline.type);
+      // Pictures the outline assigned to this page, as the web page's
+      // scene-content route assigns them: shown on the slide (durable URL)
+      // and, for a vision model, attached for the model to read.
+      const suggestedIds = new Set(safeOutline.suggestedImageIds ?? []);
+      const assignedImages = sortDocumentImagesForVision(
+        sourceImages.filter((image) => suggestedIds.has(image.id) && sourceSlideMapping[image.id]),
+      );
+      const sceneImageOptions =
+        assignedImages.length > 0
+          ? {
+              assignedImages,
+              imageMapping: sourceSlideMapping,
+              ...(contentCall.vision
+                ? {
+                    visionEnabled: true,
+                    resolvedVisionImages: assignedImages
+                      .slice(0, MAX_VISION_IMAGES)
+                      .map((image) => ({
+                        id: image.id,
+                        src: sourceVisionMapping[image.id]!,
+                        ...(image.width ? { width: image.width } : {}),
+                        ...(image.height ? { height: image.height } : {}),
+                      })),
+                  }
+                : {}),
+            }
+          : {};
       const content = await (async () => {
         try {
           return await withGenerationRetry(
             () =>
               generateSceneContent(safeOutline, contentCall.aiCall, {
+                ...sceneImageOptions,
                 agents,
                 languageDirective,
                 allowProceduralSkill: vocationalActive,
@@ -813,6 +900,29 @@ export async function generateClassroom(
     persisted = await persistClassroom({ id: stageId, stage, scenes }, options.baseUrl);
 
     log.info(`Classroom persisted: ${persisted.id}, URL: ${persisted.url}`);
+
+    // Signed-header sign-in: the same classroom as a normal course in the
+    // requested member's library, shared with the requested members.
+    if (input.library) {
+      await saveClassroomToLibrary(
+        {
+          stage: persisted.stage,
+          scenes: persisted.scenes as unknown as Parameters<
+            typeof saveClassroomToLibrary
+          >[0]['scenes'],
+          outlines,
+          requirement,
+          ...(input.jobId ? { producerRef: input.jobId } : {}),
+        },
+        input.library,
+      );
+      log.info(
+        `Classroom ${persisted.id} saved to a member library` +
+          (input.library.shareWithOwnerIds.length
+            ? ` and shared with ${input.library.shareWithOwnerIds.length} member(s)`
+            : ''),
+      );
+    }
 
     await options.onProgress?.({
       step: 'completed',

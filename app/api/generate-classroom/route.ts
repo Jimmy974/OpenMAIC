@@ -6,11 +6,49 @@ import { runClassroomGenerationJob } from '@/lib/server/classroom-job-runner';
 import { createClassroomGenerationJob } from '@/lib/server/classroom-job-store';
 import { buildRequestOrigin } from '@/lib/server/classroom-storage';
 import { createLogger } from '@/lib/logger';
-import { skillApiWriteGate } from '@/lib/server/auth/classroom-access';
+import { parseModelString } from '@/lib/ai/providers';
+import { AttachmentError, buildAttachmentBundle } from '@/lib/server/attachments/extract';
+import { readClassroomRequest } from '@/lib/server/attachments/request';
+import {
+  classroomCallerOr401,
+  serviceOwnerId,
+  skillApiWriteGate,
+} from '@/lib/server/auth/classroom-access';
+import { LibraryTargetError, resolveLibraryTarget } from '@/lib/server/auth/library';
+import { isAuthModeEnabled } from '@/lib/server/auth/signed-identity';
+import { getServerProviders } from '@/lib/server/provider-config';
 
 const log = createLogger('GenerateClassroom API');
 
-export const maxDuration = 30;
+// Attachments are read here, before the job starts; large PDFs take a while.
+export const maxDuration = 300;
+
+const MAX_STUDENT_PROFILE_CHARS = 1000;
+
+/**
+ * A server model for this job. Accepts `provider:model` or a bare model id,
+ * which must be one the server offers (the same list as the web page's model
+ * picker). Returns the `provider:model` string, or an error message.
+ */
+function resolveRequestedModel(value: unknown): { modelString: string } | { error: string } {
+  if (typeof value !== 'string' || !value.trim()) return { error: 'model must be a string' };
+  const providers = getServerProviders();
+  const offered = Object.entries(providers).flatMap(([providerId, entry]) =>
+    (entry.models ?? []).map((modelId) => ({ providerId, modelId })),
+  );
+  const requested = value.trim();
+  const match = requested.includes(':')
+    ? (() => {
+        const { providerId, modelId } = parseModelString(requested);
+        return offered.find((item) => item.providerId === providerId && item.modelId === modelId);
+      })()
+    : offered.find((item) => item.modelId === requested);
+  if (!match) {
+    const names = offered.map((item) => item.modelId).join(', ') || 'none';
+    return { error: `model must be one of: ${names}` };
+  }
+  return { modelString: `${match.providerId}:${match.modelId}` };
+}
 
 type PdfContent = NonNullable<GenerateClassroomInput['pdfContent']>;
 
@@ -33,8 +71,23 @@ export async function POST(req: NextRequest) {
   if (denied) return denied;
   let requirementSnippet: string | undefined;
   try {
-    const rawBody = (await req.json()) as Partial<GenerateClassroomInput>;
-    requirementSnippet = rawBody.requirement?.substring(0, 60);
+    let request: Awaited<ReturnType<typeof readClassroomRequest>>;
+    try {
+      request = await readClassroomRequest(req);
+    } catch (error) {
+      if (error instanceof AttachmentError) {
+        return apiError('INVALID_REQUEST', error.status, error.message);
+      }
+      throw error;
+    }
+    const rawBody = request.fields as Partial<GenerateClassroomInput> & {
+      model?: unknown;
+      owner?: unknown;
+      shareWith?: unknown;
+      studentProfile?: unknown;
+    };
+    requirementSnippet =
+      typeof rawBody.requirement === 'string' ? rawBody.requirement.substring(0, 60) : undefined;
     const pdfContent = rawBody.pdfContent;
 
     if (pdfContent !== undefined && !isValidPdfContent(pdfContent)) {
@@ -65,12 +118,62 @@ export async function POST(req: NextRequest) {
     };
     const { requirement } = body;
 
-    if (!requirement) {
+    if (!requirement || typeof requirement !== 'string') {
       return apiError('MISSING_REQUIRED_FIELD', 400, 'Missing required field: requirement');
+    }
+
+    if (rawBody.model !== undefined) {
+      const resolved = resolveRequestedModel(rawBody.model);
+      if ('error' in resolved) return apiError('INVALID_REQUEST', 400, resolved.error);
+      body.modelString = resolved.modelString;
+    }
+
+    if (rawBody.studentProfile !== undefined) {
+      if (typeof rawBody.studentProfile !== 'string') {
+        return apiError('INVALID_REQUEST', 400, 'studentProfile must be a string');
+      }
+      const profile = rawBody.studentProfile.trim().slice(0, MAX_STUDENT_PROFILE_CHARS);
+      if (profile) body.studentProfile = profile;
+    }
+
+    // Library and sharing exist only with signed-header sign-in.
+    if (isAuthModeEnabled()) {
+      const caller = classroomCallerOr401(req);
+      if (caller instanceof Response) return caller;
+      const defaultOwnerId = caller.kind === 'member' ? caller.identity.ownerId : serviceOwnerId();
+      if (!defaultOwnerId) {
+        return apiError('INVALID_REQUEST', 400, 'No owner: set AUTH_SERVICE_OWNER_LOGIN');
+      }
+      try {
+        body.library = await resolveLibraryTarget({
+          defaultOwnerId,
+          owner: rawBody.owner,
+          shareWith: rawBody.shareWith,
+        });
+      } catch (error) {
+        if (error instanceof LibraryTargetError) {
+          return apiError('INVALID_REQUEST', 400, error.message);
+        }
+        throw error;
+      }
+    } else if (rawBody.owner !== undefined || rawBody.shareWith !== undefined) {
+      return apiError('INVALID_REQUEST', 400, 'owner and shareWith need sign-in to be enabled');
+    }
+
+    if (request.files.length > 0) {
+      try {
+        body.attachments = await buildAttachmentBundle(request.files);
+      } catch (error) {
+        if (error instanceof AttachmentError) {
+          return apiError('INVALID_REQUEST', error.status, error.message);
+        }
+        throw error;
+      }
     }
 
     const baseUrl = buildRequestOrigin(req);
     const jobId = nanoid(10);
+    body.jobId = jobId;
     const job = await createClassroomGenerationJob(jobId, body);
     const pollUrl = `${baseUrl}/api/generate-classroom/${jobId}`;
 
@@ -84,6 +187,7 @@ export async function POST(req: NextRequest) {
         message: job.message,
         pollUrl,
         pollIntervalMs: 5000,
+        ...(body.attachments ? { attachments: body.attachments.summary } : {}),
       },
       202,
     );
