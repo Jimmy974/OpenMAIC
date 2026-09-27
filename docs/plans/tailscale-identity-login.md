@@ -35,6 +35,10 @@ approved design. Amendments accepted during this review are listed under
   the supported way to add a member. Node sharing is listed as "expected to
   work per Tailscale docs, not yet verified"; the ops checklist includes a live
   header check for the first node-shared member.
+  *Verified 2026-09-27:* a node-shared member's requests arrived with
+  `Tailscale-User-Login`, were signed by the bridge and registered as a
+  non-admin member; a course shared with them opened and the other courses
+  answered 404. Node sharing is now the documented default for family members.
 - **R2-10 (clarity, required proof of Design §2 and §4):** `GET
   /api/stages/[id]/status`, the three file-classroom routes and every new
   `/api/auth/*`, `/api/admin/*`, `/api/shares/*` and `/api/stages/[id]/shares`

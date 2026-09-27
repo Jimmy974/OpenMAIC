@@ -74,7 +74,8 @@ browser ─https─▶ tailscale serve (root, :443)
 - Anyone who learns another device's random anonymous learner key could claim
   that device's pre-sign-in quiz attempts.
 - Identity is per device: whoever is signed in to Tailscale on a device is
-  that person on the site. The identity chip always shows who that is.
+  that person on the site. The identity chip always shows who that is, and
+  switching the Tailscale account on a device switches who the site sees.
 
 ## Configuration
 
@@ -136,12 +137,44 @@ only and log a warning.
 
 ## Adding a member
 
-Invite them to the tailnet (Tailscale admin console → Users → Invite). The
-free Personal plan allows three users. They open the site once from their own
-signed-in device; after that they appear in share pickers and on the Family
-page. Node sharing is expected to work per Tailscale's documentation but is
-not yet verified here: for the first node-shared member, check that their
-requests reach the bridge with a login (their identity chip shows it).
+Two ways; node sharing is the recommended one for family members.
+
+**Node sharing (recommended, verified 2026-09-27).** Share only the OpenMAIC
+host with the member's own Tailscale account; they do not join your tailnet.
+
+1. Admin console → Machines → the host → ⋯ → Share… → invite by email or
+   copy the invite link.
+2. The member opens the link **signed in as themselves** and accepts it into
+   their own tailnet. On a computer that is already signed in to the admin
+   console as you, use a private (incognito) window: otherwise the share is
+   accepted by your own account and the member sees no machines.
+3. They open the site once. Serve forwards their identity for shared-in
+   users, so they appear as a member in share pickers and on the Family page.
+
+They see only this one machine, so no ACL change is needed, and a share does
+not use a tailnet user seat.
+
+**Tailnet invite.** Admin console → Users → Invite. The free Personal plan
+allows three users. The member must accept the invite and then select *your*
+tailnet in the Tailscale app: signing in without accepting creates a separate
+personal tailnet in which the host does not exist ("no matching peer").
+Invited users can reach every machine under the default policy, so restrict
+them in Access controls, for example:
+
+```jsonc
+"groups": { "group:family": ["student@example.com"] },
+"hosts":  { "openmaic": "100.x.y.z" },
+"acls": [
+  { "action": "accept", "src": ["you@example.com"], "dst": ["*:*"] },
+  { "action": "accept", "src": ["group:family"], "dst": ["openmaic:443"] },
+],
+```
+
+**Use the login exactly as Tailscale reports it.** Accounts are keyed by the
+login string, so `first.last@gmail.com` and `firstlast@gmail.com` are two
+different members even though Gmail delivers both to one inbox. The identity
+chip, the share picker and the Family page show the login to use, for
+example in `AUTH_ADMIN_LOGINS`.
 
 Devices tagged in Tailscale have no user identity and get the notice page.
 
