@@ -103,7 +103,8 @@ empty lesson.
 - Keep polling while `queued` or `running`. A failed poll request is not a
   failed job: try again at the next interval; never submit the job again.
 - Typical time: about 1 minute per page on low, 2–3 minutes on medium, plus
-  voice recording. A 15-page lesson on medium can take 30–45 minutes. You may
+  voice recording. A concise 6-page lesson on medium takes about 15–20
+  minutes; a 12-page one about 35–45. You may
   tell the person roughly how far it is from `message`.
 
 On success:
@@ -130,34 +131,44 @@ Give the person `result.url`. The lesson is also in the parent's library
 
 ## Requirement templates
 
+Lessons should be concise: as many pages as the topic needs, not more. The
+templates ask for about 5–6 pages for a simple topic and at most about 10–12
+for a complex one.
+
 Year 8 (KS3):
 
 ```
 Teach the attached material to a UK Year 8 (KS3) student.
+Keep the lesson concise: use only as many pages as the topic needs (about 5-6 pages for a simple topic, at most about 10-12 for a complex one). Combine closely related ideas on one slide and leave out anything the student does not need.
 1. First work out what topic and skills the material covers.
-2. Explain each idea step by step in simple words, one idea per slide, using worked examples taken from the material.
-3. After each part, add a short quiz of 4-5 questions of the SAME type as the material but with different numbers or examples. Mix multiple choice and short answers, and show the working in every explanation.
-4. Finish with a 10-question mixed quiz from easy to hard.
+2. Explain each key idea step by step in simple words, using worked examples taken from the material.
+3. After each main part, add a short quiz of 4-5 questions of the SAME type as the material but with different numbers or examples. Group small parts together instead of adding a quiz for every small idea. Mix multiple choice and short answers, and show the working in every explanation.
+4. If the lesson has more than one main part, finish with a mixed quiz of 6-8 questions from easy to hard.
 ```
 
 GCSE (replace the subject and tier):
 
 ```
 Teach the attached material to a UK Year 11 student sitting GCSE [Maths Higher] this summer.
+Keep the lesson concise: use only as many pages as the topic needs (about 5-6 pages for a simple topic, at most about 10-12 for a complex one). Combine closely related ideas on one slide and leave out anything the student does not need.
 1. First work out what topic and skills the material covers.
-2. Explain each idea step by step in simple words, one idea per slide, using worked examples taken from the material.
-3. After each part, add a short quiz of 4-5 GCSE exam-style questions of the SAME type as the material but with different numbers or examples. Show the marks for each question, mix multiple choice and short answers, and give mark-scheme style working in every explanation, including common mistakes.
-4. Finish with a 10-question mixed exam-style quiz from easy to hard.
+2. Explain each key idea step by step in simple words, using worked examples taken from the material.
+3. After each main part, add a short quiz of 4-5 GCSE exam-style questions of the SAME type as the material but with different numbers or examples. Group small parts together instead of adding a quiz for every small idea. Show the marks for each question, mix multiple choice and short answers, and give mark-scheme style working in every explanation, including common mistakes.
+4. If the lesson has more than one main part, finish with a mixed exam-style quiz of 6-8 questions from easy to hard.
 ```
 
 No files, just a topic: replace "the attached material" with the topic, e.g.
 "Teach solving linear equations to a UK Year 8 (KS3) student."
+
+Only a part of the material: add a line such as
+"Only cover Sections B and C of the worksheet."
 
 ## Rules
 
 1. One job at a time for a person; never submit a second job while one is
    `queued` or `running`.
 2. Use `grok-4.7-medium` for maths and anything with right/wrong answers.
+   Use the concise templates above unless the person asks for a longer lesson.
 3. Only add `shareWith` or `owner` when the person asks.
 4. Send the link only after `status` is `succeeded`.
 5. Never reveal the token.
