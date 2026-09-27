@@ -15,6 +15,7 @@ import {
   resolveProxy,
 } from '@/lib/server/provider-config';
 import { validateUrlForSSRF } from '@/lib/server/ssrf-guard';
+import { withOperatorVision } from '@/lib/server/model-vision';
 import { fetchWithRedirectValidation } from '@/lib/server/fetch-with-redirect-validation';
 import {
   getStageRoute,
@@ -161,7 +162,9 @@ export async function resolveModel(params: {
 
   return {
     model,
-    modelInfo,
+    // An operator may vouch for image input on models the catalog does not
+    // know (OPENAI_VISION_MODELS etc.; see lib/server/model-vision.ts).
+    modelInfo: withOperatorVision(providerId, modelId, modelInfo),
     modelString,
     providerId,
     modelId,
