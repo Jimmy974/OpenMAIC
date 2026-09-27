@@ -1,6 +1,6 @@
 # OpenMAIC classroom API — guide for bots
 
-_Last updated: 2026-09-27 (concise lessons, cancellation, base URL)._
+_Last updated: 2026-09-27 (concise lessons, up to 3 jobs at once, cancellation, base URL)._
 
 Use this when a person asks you to turn material (a PDF, photos of a
 worksheet, slides, notes) or a topic into an OpenMAIC classroom: a lesson
@@ -182,8 +182,9 @@ Only a part of the material: add a line such as
 
 ## Rules
 
-1. One job at a time for a person; never submit a second job while one is
-   `queued` or `running`.
+1. At most 3 jobs at once, each for a different topic. Never submit the same
+   topic again while its job is `queued` or `running` (a failed poll is not a
+   reason to resubmit).
 2. Use `grok-4.7-medium` for maths and anything with right/wrong answers.
    Use the concise templates above unless the person asks for a longer lesson.
 3. Only add `shareWith` or `owner` when the person asks.
