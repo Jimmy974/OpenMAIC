@@ -1,5 +1,7 @@
 # OpenMAIC classroom API — guide for bots
 
+_Last updated: 2026-09-27 (concise lessons, cancellation, base URL)._
+
 Use this when a person asks you to turn material (a PDF, photos of a
 worksheet, slides, notes) or a topic into an OpenMAIC classroom: a lesson
 with narrated slides and quizzes. The server does all the generation. You
@@ -11,6 +13,11 @@ submit a job, poll it, and send the person the classroom link.
 |---|---|
 | Base URL | `https://<your-host>.<tailnet>.ts.net` (Tailscale only: your machine must be on the tailnet). On the server itself: `http://127.0.0.1:3000`. |
 | Auth | Header `Authorization: Bearer $OPENMAIC_TOKEN` on every request. The operator gives you the token (stored on the server in `~/source/identity-bridge/service-token.txt`). Never print or log it. |
+
+Always call the Tailscale base URL (`https://<your-host>.<tailnet>.ts.net`), even from the server
+itself: the classroom link in the result is built from the address you call,
+so a job submitted to `http://127.0.0.1:3000` returns a link the person
+cannot open.
 
 Do not send `Origin` or `Sec-Fetch-Site` headers.
 
@@ -107,6 +114,9 @@ empty lesson.
   minutes; a 12-page one about 35–45. You may
   tell the person roughly how far it is from `message`.
 
+The server writes one page at a time, so length drives the wait: keep lessons
+concise (see the templates).
+
 On success:
 
 ```json
@@ -119,6 +129,13 @@ On success:
 Give the person `result.url`. The lesson is also in the parent's library
 (and in each `shareWith` member's "Shared with me"). On `failed`, report
 `error` and do not retry automatically.
+
+### Cancelling
+
+There is no cancel endpoint. If the person wants to stop a lesson that is
+being generated, tell them the parent (operator) has to stop it on the
+server. A stopped job ends as `failed` with `error` "Cancelled by the
+parent": report that and do not resubmit unless the person asks.
 
 ## Errors
 
