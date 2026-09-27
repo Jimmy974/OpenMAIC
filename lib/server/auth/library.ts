@@ -19,6 +19,27 @@ import { getAuthDb } from './schema';
 import { addShare } from './shares';
 import { normalizeLogin, ownerIdForLogin } from './signed-identity';
 
+/**
+ * Server-side generation writes this classroom's media (narration audio,
+ * generated and source pictures) as absolute URLs on the origin the API was
+ * called through — `http://127.0.0.1:3000` for a bot on the server, plain
+ * `http://` behind the front proxy. A browser can load neither. Media under
+ * this classroom's own `/api/classroom-media/<id>/` path is rewritten to that
+ * relative path, which every browser resolves against the page it is on.
+ */
+export function relativizeClassroomMedia<T>(value: T, stageId: string): T {
+  const marker = `/api/classroom-media/${stageId}/`;
+  return JSON.parse(
+    JSON.stringify(value, (_key, item: unknown) => {
+      if (typeof item !== 'string' || !/^https?:\/\//i.test(item)) return item;
+      const index = item.indexOf(marker);
+      return index > 0 && item.slice(0, index).match(/^https?:\/\/[^/]+$/i)
+        ? item.slice(index)
+        : item;
+    }),
+  ) as T;
+}
+
 export interface LibraryTarget {
   ownerId: string;
   shareWithOwnerIds: string[];
@@ -98,7 +119,11 @@ export async function saveClassroomToLibrary(
     updatedAt: now,
   };
   const store = await getOwnerScopedDocumentStore(target.ownerId);
-  await store.saveDocument({ stage: classroom.stage, scenes: classroom.scenes, outline });
+  await store.saveDocument({
+    stage: relativizeClassroomMedia(classroom.stage, classroom.stage.id),
+    scenes: relativizeClassroomMedia(classroom.scenes, classroom.stage.id),
+    outline,
+  });
   const db = await getAuthDb();
   await markStageGenerationComplete(db, classroom.stage.id);
   if (target.shareWithOwnerIds.length > 0) {

@@ -122,3 +122,44 @@ describe('classroom API results in a member library', () => {
     expect(await strangerStore.loadDocument(stageId)).toBeNull();
   });
 });
+
+describe('library media URLs', () => {
+  it('rewrites this classroom media to relative paths and leaves everything else', async () => {
+    const { relativizeClassroomMedia } = await import('@/lib/server/auth/library');
+    const scenes = [
+      {
+        actions: [
+          {
+            type: 'speech',
+            audioUrl: 'http://127.0.0.1:3000/api/classroom-media/abc/audio/tts_1.wav',
+          },
+          {
+            type: 'speech',
+            audioUrl: 'http://debian.example.ts.net/api/classroom-media/abc/audio/tts_2.wav',
+          },
+          { type: 'speech', audioUrl: '/api/classroom-media/abc/audio/tts_3.wav' },
+        ],
+        content: {
+          elements: [
+            { src: 'https://127.0.0.1:3000/api/classroom-media/abc/media/source-x.webp' },
+            { src: 'https://cdn.example.com/api/classroom-media/abc/elsewhere.png/extra' },
+            { src: 'http://127.0.0.1:3000/api/classroom-media/other/media/y.webp' },
+            { src: 'https://images.example.com/cat.png' },
+          ],
+        },
+      },
+    ];
+    const out = relativizeClassroomMedia(scenes, 'abc');
+    expect(out[0]!.actions.map((a) => a.audioUrl)).toEqual([
+      '/api/classroom-media/abc/audio/tts_1.wav',
+      '/api/classroom-media/abc/audio/tts_2.wav',
+      '/api/classroom-media/abc/audio/tts_3.wav',
+    ]);
+    expect(out[0]!.content.elements.map((e) => e.src)).toEqual([
+      '/api/classroom-media/abc/media/source-x.webp',
+      '/api/classroom-media/abc/elsewhere.png/extra',
+      'http://127.0.0.1:3000/api/classroom-media/other/media/y.webp',
+      'https://images.example.com/cat.png',
+    ]);
+  });
+});
