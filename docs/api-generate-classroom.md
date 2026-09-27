@@ -1,143 +1,144 @@
-# Classroom generation API (for bots)
+# OpenMAIC classroom API — guide for bots
 
-How an external agent (for example a Grok bot) creates a classroom on this
-OpenMAIC deployment, with attachments, the same way the web page does.
+Use this when a person asks you to turn material (a PDF, photos of a
+worksheet, slides, notes) or a topic into an OpenMAIC classroom: a lesson
+with narrated slides and quizzes. The server does all the generation. You
+submit a job, poll it, and send the person the classroom link.
 
-The generation runs on the server: the bot submits a job, polls it, and gets
-a classroom link. No browser tab is needed.
+## Connection
 
-## Access
+| | |
+|---|---|
+| Base URL | `https://debian.taild5f6fb.ts.net` (Tailscale only: your machine must be on the tailnet). On the server itself: `http://127.0.0.1:3000`. |
+| Auth | Header `Authorization: Bearer $OPENMAIC_TOKEN` on every request. The operator gives you the token (stored on the server in `~/source/identity-bridge/service-token.txt`). Never print or log it. |
 
-- Base URL: `https://<host>.ts.net` (through Tailscale; the bot's machine must
-  be on the tailnet) or `http://127.0.0.1:3000` on the server itself.
-- Every request carries the service token:
-  `Authorization: Bearer <AUTH_SERVICE_TOKEN>`.
-- Do not send `Origin` or `Sec-Fetch-Site: cross-site` headers (browser-only
-  headers; cross-site requests are refused).
+Do not send `Origin` or `Sec-Fetch-Site` headers.
 
-Errors: `401 AUTH_REQUIRED` = missing or wrong token; `400` = invalid request
-(the body says which field); `404` = not allowed or not found; `413` = files
-too large.
+## Step 1 — submit a job
 
-## 1. Submit a job
+`POST {BASE}/api/generate-classroom`
 
-`POST /api/generate-classroom`
+### With files (multipart, preferred)
 
-Two ways to send it. Both take the same fields.
-
-### a) multipart/form-data (recommended when you have files)
-
-| Part | Type | Notes |
-|---|---|---|
-| `request` | text (JSON) | The fields in the table below |
-| `files` | file, repeatable | Up to 5 files |
+One `request` part (a JSON object with the fields below) and one `files` part
+per file:
 
 ```bash
 curl -sS -X POST "$BASE/api/generate-classroom" \
-  -H "Authorization: Bearer $TOKEN" \
-  -F 'request={"requirement":"Teach the attached worksheet to a UK Year 8 (KS3) student ...","model":"grok-4.7-medium","shareWith":["student@example.com"],"enableTTS":true,"enableImageGeneration":true}' \
-  -F "files=@worksheet.pdf" \
-  -F "files=@page2.jpg"
+  -H "Authorization: Bearer $OPENMAIC_TOKEN" \
+  -F 'request={"requirement":"Teach the attached material to a UK Year 8 (KS3) student. ...","model":"grok-4.7-medium","enableTTS":true}' \
+  -F "files=@worksheet.pdf;type=application/pdf" \
+  -F "files=@page2.jpg;type=image/jpeg"
 ```
 
-### b) JSON (files as base64)
+### Without multipart (JSON, files as base64)
 
-```json
-{
-  "requirement": "Teach the attached worksheet ...",
-  "attachments": [
-    { "name": "worksheet.pdf", "mimeType": "application/pdf", "data": "<base64>" }
-  ]
-}
+```bash
+curl -sS -X POST "$BASE/api/generate-classroom" \
+  -H "Authorization: Bearer $OPENMAIC_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"requirement":"...","model":"grok-4.7-low","enableTTS":true,
+       "attachments":[{"name":"notes.pdf","mimeType":"application/pdf","data":"<base64>"}]}'
 ```
+
+A topic without files works too: send only the fields.
 
 ### Fields
 
-| Field | Required | Meaning |
+| Field | Required | Use |
 |---|---|---|
-| `requirement` | yes | What to teach and how. See the templates below. |
-| `studentProfile` | no | One or two sentences about the learner, like the web page's "Hi, Learner", e.g. `"UK Year 8 student (KS3). Likes step-by-step explanations."` |
-| `model` | no | One of the server's models, e.g. `"grok-4.7-low"` (fast), `"grok-4.7-medium"` (maths / answer keys), `"grok-4.7-high"`. Defaults to the server default (low). Interactive pages always use the server's route (medium). |
-| `owner` | no | Login of the member who owns the new course (it appears in their library). Defaults to the service owner (the parent). Must be a member who has opened the site once. |
-| `shareWith` | no | Logins of members who should see the course under "Shared with me". Each must have opened the site once. |
-| `enableTTS` | no | `true` = record the teacher's voice for every line. Recommended. |
-| `enableImageGeneration` | no | `true` = generate pictures for slides. |
-| `agentMode` | no | `"generate"` = tailor the AI teacher and classmates to the topic; default uses the built-in ones. |
-| `enableWebSearch` | no | Needs a web-search provider on the server (none configured today). |
+| `requirement` | yes | What to teach and how. Use a template below. **The lesson's language follows this text**: write it in English for an English lesson. |
+| `model` | no | `grok-4.7-low` (fastest, general subjects), `grok-4.7-medium` (maths and anything with answer keys), `grok-4.7-high` (slowest). Default: low. |
+| `studentProfile` | no | One or two sentences about the learner, e.g. `"UK Year 11 student sitting GCSE this year."` |
+| `enableTTS` | no | `true` = the teacher's voice for every line. Recommended. |
+| `enableImageGeneration` | no | `true` = generated pictures on slides. |
+| `agentMode` | no | `"generate"` = a teacher and classmates tailored to the topic. |
+| `shareWith` | no | Logins (emails) of family members to share the lesson with. Only when the person asks. Each must have opened the site once. |
+| `owner` | no | Login whose library the lesson goes into. Default: the parent. Leave it out unless asked. |
 
-### Attachments
+### Files
 
-Up to **5 files**, **50 MB each**, 150 MB in total. Accepted:
+Up to **5 files**, **50 MB each**, 150 MB total.
 
-| Type | What the AI gets |
+| Type | What the lesson uses |
 |---|---|
-| PDF (`.pdf`) | The text, and the page pictures (photographed or scanned worksheets work) |
-| Images (`.png`, `.jpg`, `.jpeg`, `.webp`, `.gif`) | The picture itself |
-| PowerPoint (`.pptx`) | Each slide's text, and the pictures on the slides |
-| Word (`.docx`) | The text, and the pictures in it |
-| Text (`.txt`, `.md`) | The text |
+| `.pdf` | Text and page pictures (photographed or scanned pages work) |
+| `.png` `.jpg` `.jpeg` `.webp` `.gif` | The picture |
+| `.pptx` | Each slide's text and pictures |
+| `.docx` | Text and pictures |
+| `.txt` `.md` | Text |
 
-Old binary `.ppt` / `.doc` are not supported: save them as `.pptx` / `.docx`.
-The AI reads up to about 50,000 characters of text and looks at up to 20
-pictures in total; split a whole book into chapters (one classroom each).
+Old `.ppt` / `.doc` are refused: ask for `.pptx` / `.docx`. The lesson reads
+about 50,000 characters and looks at up to 20 pictures; for a whole book,
+make one classroom per chapter.
 
-### Response (202)
+### Response — `202`
 
 ```json
 {
   "success": true,
   "jobId": "abc123",
   "status": "queued",
-  "pollUrl": "https://<host>/api/generate-classroom/abc123",
+  "pollUrl": "https://debian.taild5f6fb.ts.net/api/generate-classroom/abc123",
   "pollIntervalMs": 5000,
-  "attachments": { "files": 2, "textChars": 1830, "images": 3 }
+  "attachments": { "files": 1, "textChars": 1830, "images": 2 }
 }
 ```
 
-`attachments` reports what was read from the files, so the bot can tell at
-once if a file produced nothing.
+If you sent files and `attachments.textChars` and `attachments.images` are
+both `0`, nothing could be read: tell the person instead of waiting for an
+empty lesson.
 
-## 2. Poll the job
+## Step 2 — poll until done
 
-`GET /api/generate-classroom/{jobId}` with the same `Authorization` header,
-about every 30–60 seconds, until `status` is `succeeded` or `failed`. Never
-resubmit because one poll failed.
+`GET {pollUrl}` with the same `Authorization` header, every 30–60 seconds.
 
 ```json
-{
-  "success": true,
-  "status": "running",
-  "step": "generating_scenes",
-  "progress": 45,
+{ "status": "running", "step": "generating_scenes", "progress": 45,
   "message": "Generating scene 5/12: Two Signs Side by Side",
-  "scenesGenerated": 4,
-  "totalScenes": 12,
-  "done": false
-}
+  "scenesGenerated": 4, "totalScenes": 12, "done": false }
 ```
+
+- `status` goes `queued` → `running` → `succeeded` or `failed`.
+- Keep polling while `queued` or `running`. A failed poll request is not a
+  failed job: try again at the next interval; never submit the job again.
+- Typical time: about 1 minute per page on low, 2–3 minutes on medium, plus
+  voice recording. A 15-page lesson on medium can take 30–45 minutes. You may
+  tell the person roughly how far it is from `message`.
 
 On success:
 
 ```json
-{
-  "status": "succeeded",
-  "done": true,
-  "result": {
-    "classroomId": "Xy12AbCd9Q",
-    "url": "https://<host>/classroom/Xy12AbCd9Q",
-    "scenesCount": 12
-  }
-}
+{ "status": "succeeded", "done": true,
+  "result": { "classroomId": "Xy12AbCd9Q",
+              "url": "https://debian.taild5f6fb.ts.net/classroom/Xy12AbCd9Q",
+              "scenesCount": 12 } }
 ```
 
-Send the `url` to the student. It is in the owner's library, in every
-`shareWith` member's "Shared with me", and the parent's Family page shows the
-students' quiz results for it.
+Give the person `result.url`. The lesson is also in the parent's library
+(and in each `shareWith` member's "Shared with me"). On `failed`, report
+`error` and do not retry automatically.
 
-Typical time: about 1 minute per page on `grok-4.7-low`, 2–3 minutes on
-`grok-4.7-medium`, plus voice recording when `enableTTS` is on.
+## Errors
+
+| Status | Meaning | What to do |
+|---|---|---|
+| `400` | A field or file is wrong; `error` says which | Fix it or tell the person (e.g. "that member hasn't opened the site yet") |
+| `401` | Missing or wrong token | Stop; ask the operator for the token |
+| `404` | Not allowed | Stop; the token or identity cannot do this |
+| `413` | Files too large | Ask for smaller files or fewer pages |
 
 ## Requirement templates
+
+Year 8 (KS3):
+
+```
+Teach the attached material to a UK Year 8 (KS3) student.
+1. First work out what topic and skills the material covers.
+2. Explain each idea step by step in simple words, one idea per slide, using worked examples taken from the material.
+3. After each part, add a short quiz of 4-5 questions of the SAME type as the material but with different numbers or examples. Mix multiple choice and short answers, and show the working in every explanation.
+4. Finish with a 10-question mixed quiz from easy to hard.
+```
 
 GCSE (replace the subject and tier):
 
@@ -149,23 +150,14 @@ Teach the attached material to a UK Year 11 student sitting GCSE [Maths Higher] 
 4. Finish with a 10-question mixed exam-style quiz from easy to hard.
 ```
 
-Year 8:
+No files, just a topic: replace "the attached material" with the topic, e.g.
+"Teach solving linear equations to a UK Year 8 (KS3) student."
 
-```
-Teach the attached material to a UK Year 8 (KS3) student.
-1. First work out what topic and skills the material covers.
-2. Explain each idea step by step in simple words, one idea per slide, using worked examples taken from the material.
-3. After each part, add a short quiz of 4-5 questions of the SAME type as the material but with different numbers or examples. Mix multiple choice and short answers, and show the working in every explanation.
-4. Finish with a 10-question mixed quiz from easy to hard.
-```
+## Rules
 
-## Rules for the bot
-
-1. One job at a time per request from a person; do not submit a second job
-   while one is `queued` or `running`.
-2. The lesson's language follows the `requirement`: write it in English for an
-   English lesson (there is no `language` field).
-3. Use `grok-4.7-medium` for maths and anything with answer keys.
-4. If `attachments.textChars` is 0 and `attachments.images` is 0, the files
-   were unreadable: tell the person instead of generating an empty lesson.
-5. Report the `url` only after `status` is `succeeded`.
+1. One job at a time for a person; never submit a second job while one is
+   `queued` or `running`.
+2. Use `grok-4.7-medium` for maths and anything with right/wrong answers.
+3. Only add `shareWith` or `owner` when the person asks.
+4. Send the link only after `status` is `succeeded`.
+5. Never reveal the token.
